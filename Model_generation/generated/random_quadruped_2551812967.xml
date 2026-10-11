@@ -1,0 +1,177 @@
+<mujoco model="genloco_random_quadruped_2551812967">
+  <compiler angle="radian" inertiafromgeom="false" meshdir="../robot_descriptions/a1_description/meshes" />
+  <option timestep="0.001" />
+  <default>
+    <joint damping="0.1" armature="0.01" />
+    <default class="visual">
+      <geom contype="0" conaffinity="0" group="1" />
+    </default>
+    <default class="collision">
+      <geom contype="1" conaffinity="0" group="3" rgba="0.2 0.6 1 0.4" />
+    </default>
+  </default>
+  <visual>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.6 0.6 0.6" />
+    <global azimuth="140" elevation="-20" />
+  </visual>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512" />
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" width="512" height="512" />
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance="0.2" />
+    <mesh name="hip_0" file="hip.obj" scale="1 1 1" />
+  </asset>
+  <worldbody>
+    <light pos="0 0 3" dir="0 0 -1" directional="true" />
+    <geom name="floor" type="plane" size="0 0 0.05" material="grid" contype="0" conaffinity="1" />
+    <body name="trunk" pos="0 0 0.853915">
+      <freejoint name="root" />
+      <inertial pos="0.012731 0.002186 0.000515" quat="1 0 0 0" mass="3.30007" diaginertia="0.00919235 0.0369248 0.0367279" />
+      <geom pos="0 0 0" quat="1 0 0 0" type="box" size="0.171171 0.0639434 0.065328" rgba="1 0.423529 0.0392157 1" class="visual" />
+      <geom pos="0 0 0" quat="1 0 0 0" type="box" size="0.171171 0.0639434 0.065328" friction="0.5 0.005 0.0001" class="collision" />
+      <body name="imu" pos="0 0 0" quat="1 0 0 0">
+        <inertial pos="0 0 0" quat="1 0 0 0" mass="0.000717537" diaginertia="1e-07 1e-07 1e-07" />
+        <geom pos="0 0 0" quat="1 0 0 0" type="box" size="0.0005 0.0005 0.0005" rgba="0.8 0 0 1" class="visual" />
+        <geom pos="0 0 0" quat="1 0 0 0" type="box" size="0.0005 0.0005 0.0005" friction="0.5 0.005 0.0001" class="collision" />
+      </body>
+      <body name="FR_hip" pos="0.248858 -0.0280085 0" quat="1 0 0 0">
+        <joint name="joint2" type="hinge" axis="1 0 0" range="-0.802851 0.802851" />
+        <inertial pos="-0.003311 -0.000635 3.1e-05" quat="1 0 0 0" mass="1.13999" diaginertia="1e-07 1e-07 1e-07" />
+        <geom pos="0 0 0" quat="1.03534e-13 -1 -0 0" type="mesh" mesh="hip_0" rgba="1 0.423529 0.0392157 1" class="visual" />
+        <geom type="cylinder" fromto="0 0 0 0 -0.0311678 0" size="0.0189553" rgba="1 0.423529 0.0392157 1" class="visual" />
+        <body name="FR_hip_fixed" pos="0 -0.0311678 0" quat="1 0 0 0">
+          <inertial pos="0 0 0" quat="1 0 0 0" mass="0.000723514" diaginertia="1e-07 1e-07 1e-07" />
+          <geom pos="0 0 0" quat="0.707107 0.707107 0 0" type="cylinder" size="0.041 0.016" rgba="1 1 1 1" class="visual" />
+        </body>
+        <body name="FR_upper" pos="0 -0.0311678 0" quat="1 0 0 0">
+          <joint name="joint4" type="hinge" axis="0 1 0" range="-1.0472 4.18879" />
+          <inertial pos="-0.003237 0.022327 -0.027326" quat="1 0 0 0" mass="0.887586" diaginertia="0.00021261 0.000295772 0.000295772" />
+          <geom pos="0 0 -0.12653" quat="1 0 0 0" type="cylinder" size="0.0189553 0.12653" rgba="1 0.423529 0.0392157 1" class="visual" />
+          <geom pos="0 0 -0.12653" quat="0.707107 0 0.707107 -0" type="cylinder" size="0.0189553 0.0253059" friction="0.5 0.005 0.0001" class="collision" />
+          <body name="FR_lower" pos="0 0 -0.253059" quat="1 0 0 0">
+            <joint name="joint5" type="hinge" axis="0 1 0" range="-2.69653 -0.916298" />
+            <inertial pos="0.006435 0 -0.107388" quat="1 0 0 0" mass="0.123372" diaginertia="2.00928e-05 4.16941e-05 4.16941e-05" />
+            <geom pos="0 0 -0.138706" quat="1 0 0 0" type="cylinder" size="0.01563 0.138706" rgba="1 0.423529 0.0392157 1" class="visual" />
+            <geom pos="0 0 -0.138706" quat="0.707107 0 0.707107 -0" type="cylinder" size="0.01563 0.0277411" friction="0.5 0.005 0.0001" class="collision" />
+            <body name="FR_toe" pos="0 0 -0.277411" quat="1 0 0 0">
+              <inertial pos="0 0 0" quat="1 0 0 0" mass="0.0762702" diaginertia="1.67693e-05 1.67693e-05 1.67693e-05" />
+              <geom pos="0 0 0" quat="1 0 0 0" type="sphere" size="0.023445" rgba="1 0.423529 0.0392157 1" class="visual" />
+              <geom pos="0 0 0" quat="1 0 0 0" type="sphere" size="0.023445" friction="0.5 0.005 0.0001" class="collision" />
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="FL_hip" pos="0.248858 0.0280085 0" quat="1 0 0 0">
+        <joint name="joint7" type="hinge" axis="1 0 0" range="-0.802851 0.802851" />
+        <inertial pos="-0.003311 0.000635 3.1e-05" quat="1 0 0 0" mass="1.22598" diaginertia="1e-07 1e-07 1e-07" />
+        <geom pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="hip_0" rgba="1 0.423529 0.0392157 1" class="visual" />
+        <geom type="cylinder" fromto="0 0 0 0 0.0311678 0" size="0.0189553" rgba="1 0.423529 0.0392157 1" class="visual" />
+        <body name="FL_hip_fixed" pos="0 0.0311678 0" quat="1 0 0 0">
+          <inertial pos="0 0 0" quat="1 0 0 0" mass="0.00120241" diaginertia="1e-07 1e-07 1e-07" />
+          <geom pos="0 0 0" quat="0.707107 0.707107 0 0" type="cylinder" size="0.041 0.016" rgba="1 1 1 1" class="visual" />
+        </body>
+        <body name="FL_upper" pos="0 0.0311678 0" quat="1 0 0 0">
+          <joint name="joint9" type="hinge" axis="0 1 0" range="-1.0472 4.18879" />
+          <inertial pos="-0.003237 -0.022327 -0.027326" quat="1 0 0 0" mass="1.28399" diaginertia="0.000307562 0.000427865 0.000427865" />
+          <geom pos="0 0 -0.12653" quat="1 0 0 0" type="cylinder" size="0.0189553 0.12653" rgba="1 0.423529 0.0392157 1" class="visual" />
+          <geom pos="0 0 -0.12653" quat="0.707107 0 0.707107 -0" type="cylinder" size="0.0189553 0.0253059" friction="0.5 0.005 0.0001" class="collision" />
+          <body name="FL_lower" pos="0 0 -0.253059" quat="1 0 0 0">
+            <joint name="joint10" type="hinge" axis="0 1 0" range="-2.69653 -0.916298" />
+            <inertial pos="0.006435 0 -0.107388" quat="1 0 0 0" mass="0.212894" diaginertia="3.46728e-05 7.19487e-05 7.19487e-05" />
+            <geom pos="0 0 -0.138706" quat="1 0 0 0" type="cylinder" size="0.01563 0.138706" rgba="1 0.423529 0.0392157 1" class="visual" />
+            <geom pos="0 0 -0.138706" quat="0.707107 0 0.707107 -0" type="cylinder" size="0.01563 0.0277411" friction="0.5 0.005 0.0001" class="collision" />
+            <body name="FL_toe" pos="0 0 -0.277411" quat="1 0 0 0">
+              <inertial pos="0 0 0" quat="1 0 0 0" mass="0.0697953" diaginertia="1.53457e-05 1.53457e-05 1.53457e-05" />
+              <geom pos="0 0 0" quat="1 0 0 0" type="sphere" size="0.023445" rgba="1 0.423529 0.0392157 1" class="visual" />
+              <geom pos="0 0 0" quat="1 0 0 0" type="sphere" size="0.023445" friction="0.5 0.005 0.0001" class="collision" />
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="RR_hip" pos="-0.248858 -0.0280085 0" quat="1 0 0 0">
+        <joint name="joint12" type="hinge" axis="1 0 0" range="-0.802851 0.802851" />
+        <inertial pos="0.003311 -0.000635 3.1e-05" quat="1 0 0 0" mass="1.00059" diaginertia="1e-07 1e-07 1e-07" />
+        <geom pos="0 0 0" quat="6.12323e-17 1.03412e-13 1.03412e-13 1" type="mesh" mesh="hip_0" rgba="1 0.423529 0.0392157 1" class="visual" />
+        <geom type="cylinder" fromto="0 0 0 0 -0.0311678 0" size="0.0189553" rgba="1 0.423529 0.0392157 1" class="visual" />
+        <body name="RR_hip_fixed" pos="0 -0.0311678 0" quat="1 0 0 0">
+          <inertial pos="0 0 0" quat="1 0 0 0" mass="0.00158264" diaginertia="1e-07 1e-07 1e-07" />
+          <geom pos="0 0 0" quat="0.707107 0.707107 0 0" type="cylinder" size="0.041 0.016" rgba="1 1 1 1" class="visual" />
+        </body>
+        <body name="RR_upper" pos="0 -0.0311678 0" quat="1 0 0 0">
+          <joint name="joint14" type="hinge" axis="0 1 0" range="-1.0472 4.18879" />
+          <inertial pos="-0.003237 0.022327 -0.027326" quat="1 0 0 0" mass="1.72281" diaginertia="0.000412675 0.000574093 0.000574093" />
+          <geom pos="0 0 -0.12653" quat="1 0 0 0" type="cylinder" size="0.0189553 0.12653" rgba="1 0.423529 0.0392157 1" class="visual" />
+          <geom pos="0 0 -0.12653" quat="0.707107 0 0.707107 -0" type="cylinder" size="0.0189553 0.0253059" friction="0.5 0.005 0.0001" class="collision" />
+          <body name="RR_lower" pos="0 0 -0.253059" quat="1 0 0 0">
+            <joint name="joint15" type="hinge" axis="0 1 0" range="-2.69653 -0.916298" />
+            <inertial pos="0.006435 0 -0.107388" quat="1 0 0 0" mass="0.141986" diaginertia="2.31245e-05 4.7985e-05 4.7985e-05" />
+            <geom pos="0 0 -0.138706" quat="1 0 0 0" type="cylinder" size="0.01563 0.138706" rgba="1 0.423529 0.0392157 1" class="visual" />
+            <geom pos="0 0 -0.138706" quat="0.707107 0 0.707107 -0" type="cylinder" size="0.01563 0.0277411" friction="0.5 0.005 0.0001" class="collision" />
+            <body name="RR_toe" pos="0 0 -0.277411" quat="1 0 0 0">
+              <inertial pos="0 0 0" quat="1 0 0 0" mass="0.112114" diaginertia="2.46501e-05 2.46501e-05 2.46501e-05" />
+              <geom pos="0 0 0" quat="1 0 0 0" type="sphere" size="0.023445" rgba="1 0.423529 0.0392157 1" class="visual" />
+              <geom pos="0 0 0" quat="1 0 0 0" type="sphere" size="0.023445" friction="0.5 0.005 0.0001" class="collision" />
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="RL_hip" pos="-0.248858 0.0280085 0" quat="1 0 0 0">
+        <joint name="joint17" type="hinge" axis="1 0 0" range="-0.802851 0.802851" />
+        <inertial pos="0.003311 0.000635 3.1e-05" quat="1 0 0 0" mass="0.479878" diaginertia="1e-07 1e-07 1e-07" />
+        <geom pos="0 0 0" quat="-1.03412e-13 6.12323e-17 1 6.12323e-17" type="mesh" mesh="hip_0" rgba="1 0.423529 0.0392157 1" class="visual" />
+        <geom type="cylinder" fromto="0 0 0 0 0.0311678 0" size="0.0189553" rgba="1 0.423529 0.0392157 1" class="visual" />
+        <body name="RL_hip_fixed" pos="0 0.0311678 0" quat="1 0 0 0">
+          <inertial pos="0 0 0" quat="1 0 0 0" mass="0.00157387" diaginertia="1e-07 1e-07 1e-07" />
+          <geom pos="0 0 0" quat="0.707107 0.707107 0 0" type="cylinder" size="0.041 0.016" rgba="1 1 1 1" class="visual" />
+        </body>
+        <body name="RL_upper" pos="0 0.0311678 0" quat="1 0 0 0">
+          <joint name="joint19" type="hinge" axis="0 1 0" range="-1.0472 4.18879" />
+          <inertial pos="-0.003237 -0.022327 -0.027326" quat="1 0 0 0" mass="1.27684" diaginertia="0.000305851 0.000425485 0.000425485" />
+          <geom pos="0 0 -0.12653" quat="1 0 0 0" type="cylinder" size="0.0189553 0.12653" rgba="1 0.423529 0.0392157 1" class="visual" />
+          <geom pos="0 0 -0.12653" quat="0.707107 0 0.707107 -0" type="cylinder" size="0.0189553 0.0253059" friction="0.5 0.005 0.0001" class="collision" />
+          <body name="RL_lower" pos="0 0 -0.253059" quat="1 0 0 0">
+            <joint name="joint20" type="hinge" axis="0 1 0" range="-2.69653 -0.916298" />
+            <inertial pos="0.006435 0 -0.107388" quat="1 0 0 0" mass="0.160405" diaginertia="2.61242e-05 5.42098e-05 5.42098e-05" />
+            <geom pos="0 0 -0.138706" quat="1 0 0 0" type="cylinder" size="0.01563 0.138706" rgba="1 0.423529 0.0392157 1" class="visual" />
+            <geom pos="0 0 -0.138706" quat="0.707107 0 0.707107 -0" type="cylinder" size="0.01563 0.0277411" friction="0.5 0.005 0.0001" class="collision" />
+            <body name="RL_toe" pos="0 0 -0.277411" quat="1 0 0 0">
+              <inertial pos="0 0 0" quat="1 0 0 0" mass="0.0706498" diaginertia="1.55335e-05 1.55335e-05 1.55335e-05" />
+              <geom pos="0 0 0" quat="1 0 0 0" type="sphere" size="0.023445" rgba="1 0.423529 0.0392157 1" class="visual" />
+              <geom pos="0 0 0" quat="1 0 0 0" type="sphere" size="0.023445" friction="0.5 0.005 0.0001" class="collision" />
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <custom>
+    <numeric name="max_velocity_joint2" data="11.7908" />
+    <numeric name="max_velocity_joint4" data="11.7908" />
+    <numeric name="max_velocity_joint5" data="11.7908" />
+    <numeric name="max_velocity_joint7" data="11.7908" />
+    <numeric name="max_velocity_joint9" data="11.7908" />
+    <numeric name="max_velocity_joint10" data="11.7908" />
+    <numeric name="max_velocity_joint12" data="11.7908" />
+    <numeric name="max_velocity_joint14" data="11.7908" />
+    <numeric name="max_velocity_joint15" data="11.7908" />
+    <numeric name="max_velocity_joint17" data="11.7908" />
+    <numeric name="max_velocity_joint19" data="11.7908" />
+    <numeric name="max_velocity_joint20" data="11.7908" />
+  </custom>
+  <actuator>
+    <position name="joint2_motor" joint="joint2" kp="106.687" kv="1.06687" ctrlrange="-0.802851 0.802851" />
+    <position name="joint4_motor" joint="joint4" kp="106.687" kv="2.13373" ctrlrange="-1.0472 4.18879" />
+    <position name="joint5_motor" joint="joint5" kp="106.687" kv="2.13373" ctrlrange="-2.69653 -0.916298" />
+    <position name="joint7_motor" joint="joint7" kp="106.687" kv="1.06687" ctrlrange="-0.802851 0.802851" />
+    <position name="joint9_motor" joint="joint9" kp="106.687" kv="2.13373" ctrlrange="-1.0472 4.18879" />
+    <position name="joint10_motor" joint="joint10" kp="106.687" kv="2.13373" ctrlrange="-2.69653 -0.916298" />
+    <position name="joint12_motor" joint="joint12" kp="106.687" kv="1.06687" ctrlrange="-0.802851 0.802851" />
+    <position name="joint14_motor" joint="joint14" kp="106.687" kv="2.13373" ctrlrange="-1.0472 4.18879" />
+    <position name="joint15_motor" joint="joint15" kp="106.687" kv="2.13373" ctrlrange="-2.69653 -0.916298" />
+    <position name="joint17_motor" joint="joint17" kp="106.687" kv="1.06687" ctrlrange="-0.802851 0.802851" />
+    <position name="joint19_motor" joint="joint19" kp="106.687" kv="2.13373" ctrlrange="-1.0472 4.18879" />
+    <position name="joint20_motor" joint="joint20" kp="106.687" kv="2.13373" ctrlrange="-2.69653 -0.916298" />
+  </actuator>
+  <keyframe>
+    <key name="stand" qpos="0 0 0.65319 1 0 0 0 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8" ctrl="0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8" />
+  </keyframe>
+</mujoco>

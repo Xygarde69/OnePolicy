@@ -1,0 +1,14 @@
+WARNING Sun Oct 11 12:35:00 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Sun Oct 11 18:06:12 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Sun Oct 11 18:28:03 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Sun Oct 11 18:42:18 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Sun Oct 11 18:45:32 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Sun Oct 11 18:47:37 2026: OpenGL error 0x502 in or before mjr_makeContext
+
+WARNING Sun Oct 11 18:51:12 2026: OpenGL error 0x502 in or before mjr_makeContext
+

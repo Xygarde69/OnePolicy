@@ -3,7 +3,19 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-12  train.py --generalise: half generated, half real-robot proxies
+2026-10-12  --plot: outliers no longer flatten mean_reward.png
+  - plot_rewards drops points beyond a fence of 3 IQR + max(|q1|, |q3|, 1)
+    (the line breaks there), so the y-axis fits the real curve, and notes
+    "N outlier points not drawn". The csv is unchanged.
+  - Why: in run 2026-10-12_16-01-55, 14 iterations had a mean of -1e8 to
+    -2e12. These came from generated robots only (proxies normal), so some
+    episodes are blowing up in simulation. Those points stretched the axis to
+    -2.5e12 and the actual -4 -> 47 curve showed as a flat line at 0.
+  - Checked: re-rendered that run (28 points dropped, curve readable), its
+    first 15 iterations (tiny IQR, nothing dropped) and run 14-21-18 (no
+    groups, nothing dropped).
+
+2026-10-12  train.py --generalise: half generated, half real-robot proxies (cc5828f)
   - generalise_split: real-robot proxies now take round(1/2) of num_envs
     instead of 1/3 (4096 -> 2048 generated, 512 each of Spot, A1, Barkour v0,
     Go2). Docstrings, module help and README updated.

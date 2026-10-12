@@ -3,6 +3,7 @@ import statistics
 from collections import deque
 from pathlib import Path
 
+import numpy as np
 import torch
 import wandb
 
@@ -122,13 +123,32 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
     import matplotlib.pyplot as plt
 
     its = [h[0] for h in history]
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.plot(its, [h[1] for h in history], linewidth=1.8, color="black", label="all")
+    lines = [("all", its, [h[1] for h in history])]
     for bucket in self._groups:
       points = [(h[0], h[2][bucket]) for h in history if h[2][bucket] is not None]
       if points:
-        x, y = zip(*points)
-        ax.plot(x, y, linewidth=1.0, alpha=0.8, label=self._group_label[bucket])
+        lines.append((self._group_label[bucket], *zip(*points)))
+    # A rare simulation blow-up gives one iteration a mean of ~-1e12, which
+    # would flatten everything else: drop points beyond a 3 IQR fence (the
+    # line breaks there) and report how many. Blow-ups are orders of
+    # magnitude off, so the fence also gets a floor of the rewards' own size,
+    # which keeps early iterations (tiny IQR) intact.
+    values = np.array([v for _, _, y in lines for v in y])
+    q1, q3 = np.percentile(values[np.isfinite(values)], [25, 75])
+    fence = 3 * (q3 - q1) + max(abs(q1), abs(q3), 1.0)
+    lo, hi = q1 - fence, q3 + fence
+    off_scale = int(np.sum(~((values >= lo) & (values <= hi))))
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    for label, x, y in lines:
+      y = np.array(y, dtype=float)
+      y[~((y >= lo) & (y <= hi))] = np.nan
+      style = (dict(linewidth=1.8, color="black") if label == "all"
+               else dict(linewidth=1.0, alpha=0.8))
+      ax.plot(x, y, label=label, **style)
+    if off_scale:
+      ax.text(0.01, 0.01, f"{off_scale} outlier points not drawn (see csv)",
+              transform=ax.transAxes, fontsize=8, color="gray")
     ax.legend(loc="best", fontsize=8)
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Mean episode reward")

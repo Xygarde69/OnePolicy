@@ -76,9 +76,9 @@ class UniformVelocityCommand(CommandTerm):
 
   def _resample_command(self, env_ids: torch.Tensor) -> None:
     r = torch.empty(len(env_ids), device=self.device)
-    self.vel_command_b[env_ids, 0] = r.uniform_(*self.cfg.ranges.lin_vel_x) * self.cfg.lin_vel_scale
-    self.vel_command_b[env_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y) * self.cfg.lin_vel_scale
-    self.vel_command_b[env_ids, 2] = r.uniform_(*self.cfg.ranges.ang_vel_z) * self.cfg.ang_vel_z_scale
+    self.vel_command_b[env_ids, 0] = r.uniform_(*self.cfg.ranges.lin_vel_x)
+    self.vel_command_b[env_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y)
+    self.vel_command_b[env_ids, 2] = r.uniform_(*self.cfg.ranges.ang_vel_z)
     self.vel_command_b[env_ids, :] *= (torch.norm(self.vel_command_b[env_ids, :], dim=1) > 0.1).unsqueeze(1)
     # Ranges are Go2's; each robot gets them scaled by its speed scale.
     self.vel_command_b[env_ids, :2] *= get_morph_scales(self._env).speed[env_ids, None]
@@ -109,8 +109,8 @@ class UniformVelocityCommand(CommandTerm):
       env_ids = self.is_heading_env.nonzero(as_tuple=False).flatten()
       self.vel_command_b[env_ids, 2] = torch.clip(
         self.cfg.heading_control_stiffness * self.heading_error[env_ids],
-        min=self.cfg.ranges.ang_vel_z[0] * self.cfg.ang_vel_z_scale,
-        max=self.cfg.ranges.ang_vel_z[1] * self.cfg.ang_vel_z_scale,
+        min=self.cfg.ranges.ang_vel_z[0],
+        max=self.cfg.ranges.ang_vel_z[1],
       )
     standing_env_ids = self.is_standing_env.nonzero(as_tuple=False).flatten()
     self.vel_command_b[standing_env_ids, :] = 0.0
@@ -266,12 +266,6 @@ class UniformVelocityCommandCfg(CommandTermCfg):
   rel_standing_envs: float = 0.0
   rel_heading_envs: float = 1.0
   init_velocity_prob: float = 0.0
-  ang_vel_z_scale: float = 1.0
-  """Multiplies the sampled yaw-rate command (and the heading controller's clip).
-  Raised by the runner once the mean episode reward passes a threshold."""
-  lin_vel_scale: float = 1.0
-  """Multiplies the sampled x/y velocity commands. Raised by the runner after
-  ang_vel_z_scale, once the mean episode reward passes a second threshold."""
 
   @dataclass
   class Ranges:

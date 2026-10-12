@@ -1,0 +1,45 @@
+OnePolicy change log
+====================
+Newest first. One entry per change: what changed, why, and how it was checked.
+Commit hashes refer to the commit that made the change.
+
+2026-10-12  Remove reward-gated command boost; add train.py --plot
+  - Removed the yaw / x-y command boost from tasks/velocity/rl/runner.py
+    (and the ang_vel_z_scale / lin_vel_scale fields it set on the command
+    config). It multiplied command ranges x5 once the mean episode reward
+    passed fixed thresholds (43 / 45), which the new reward terms made
+    meaningless and which hid the real command curriculum (curriculums.py).
+  - train.py --plot (or --plot True): appends the mean episode reward per
+    iteration to <log_dir>/mean_reward.csv and redraws
+    <log_dir>/mean_reward.png every 10 iterations and when training ends
+    (also on Ctrl+C). Rank 0 only.
+  - Checked: 12-iteration run with 64 envs wrote the CSV (12 rows) and PNG.
+
+2026-10-12  play.py --joystick (8c12ee8)
+  - Drive the robot with a DualSense right stick: up/down = forward/back,
+    left/right = turn, 10% deadzone. Reads /dev/input/js0 through the Linux
+    joystick API (gamepad.py), no new dependency. Full-stick speeds default to
+    the task's command range; --joystick-max-forward/-backward/-yaw override.
+  - Checked: play env with the stick at rest overrides the sampled command
+    with zero. Stick direction not yet verified on screen.
+
+2026-10-12  KAIST Hound reward terms (68e8a31)
+  - From arXiv 2312.17507 Table I, weights divided by its tracking weight of
+    6 and normalised per robot to Go2 units: foot_contact_velocity (-0.5),
+    diagonal_gait (+0.2, above 1.5 m/s), joint torque (-1e-4), joint velocity
+    (-5e-5), action_acc_l2 (-0.01). soft_landing halved to -5e-4. Tracking
+    weights ramp to 2.0 / 1.5 with the command curriculum. Full rationale in
+    CLAUDE.md.
+  - Checked: train_test.py headless run loads all terms without errors.
+    Not yet trained.
+
+2026-10-12  Shin geoms, temp robot dirs, command boost (b84afeb)
+  - adapt.py names collision geoms that reach the foot tip
+    {leg}_shin_N_collision; illegal_contact ignores them. ccd_iterations 50,
+    nconmax 64. Generated robots live in temp dirs. (Command boost added
+    here, removed 2026-10-12 above.)
+
+2026-10-12  training fixed (e0291ef)
+2026-10-11  training code (4adb716)
+2026-10-11  Procedural generation (2a88e01)
+2026-10-11  first commit (def8744)

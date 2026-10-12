@@ -1,5 +1,6 @@
 import os
 import statistics
+from pathlib import Path
 
 import wandb
 
@@ -11,46 +12,58 @@ from mjlab.rl.exporter_utils import (
 from mjlab.rl.runner import MjlabOnPolicyRunner
 
 
-# Once the mean episode reward (rsl_rl's "Mean reward") exceeds YAW_BOOST_REWARD,
-# yaw-rate commands are sampled with BOOST_SCALE times their magnitude; once it
-# then exceeds LIN_BOOST_REWARD, at least MIN_BOOST_GAP iterations after the yaw
-# boost, x/y velocity commands are too. One-way.
-YAW_BOOST_REWARD = 43.0
-LIN_BOOST_REWARD = 45.0
-BOOST_SCALE = 5.0
-MIN_BOOST_GAP = 100
+# With --plot, the mean episode reward (rsl_rl's "Mean reward") is appended to
+# <log_dir>/mean_reward.csv every iteration and drawn into mean_reward.png every
+# PLOT_EVERY iterations and when training ends.
+PLOT_EVERY = 10
 
 
 class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
   env: RslRlVecEnvWrapper
 
-  def __init__(self, *args, **kwargs):
-    super().__init__(*args, **kwargs)
-    self._yaw_boost_it: int | None = None
+  def enable_reward_plot(self) -> None:
+    """Record and plot the mean episode reward per iteration (rank 0 only)."""
+    if self.logger.log_dir is None or self.logger.disable_logs:
+      return
+    self._reward_csv = Path(self.logger.log_dir) / "mean_reward.csv"
+    self._reward_png = Path(self.logger.log_dir) / "mean_reward.png"
+    self._reward_history: list[tuple[int, float]] = []
+    self._reward_csv.write_text("iteration,mean_reward\n")
     log = self.logger.log
 
-    def log_and_maybe_boost(*a, **kw):
-      log(*a, **kw)
-      self._maybe_boost_commands()
+    def log_and_record(it, *a, **kw):
+      log(it, *a, **kw)
+      if not self.logger.rewbuffer:
+        return
+      mean_reward = statistics.mean(self.logger.rewbuffer)
+      self._reward_history.append((it, mean_reward))
+      with self._reward_csv.open("a") as f:
+        f.write(f"{it},{mean_reward:.6f}\n")
+      if len(self._reward_history) % PLOT_EVERY == 0:
+        self.plot_rewards()
 
-    self.logger.log = log_and_maybe_boost
+    self.logger.log = log_and_record
+    print(f"[INFO] Plotting mean reward to {self._reward_png}", flush=True)
 
-  def _maybe_boost_commands(self) -> None:
-    cfg = self.env.unwrapped.command_manager.get_term("twist").cfg
-    if cfg.lin_vel_scale != 1.0 or not self.logger.rewbuffer:
+  def plot_rewards(self) -> None:
+    history = getattr(self, "_reward_history", None)
+    if not history:
       return
-    mean_reward = statistics.mean(self.logger.rewbuffer)
-    if cfg.ang_vel_z_scale == 1.0:
-      if mean_reward > YAW_BOOST_REWARD:
-        cfg.ang_vel_z_scale = BOOST_SCALE
-        self._yaw_boost_it = self.current_learning_iteration
-        print(f"[INFO] Mean reward {mean_reward:.2f} > {YAW_BOOST_REWARD}: "
-              f"yaw commands now x{BOOST_SCALE}", flush=True)
-    elif (mean_reward > LIN_BOOST_REWARD and self._yaw_boost_it is not None
-          and self.current_learning_iteration - self._yaw_boost_it >= MIN_BOOST_GAP):
-      cfg.lin_vel_scale = BOOST_SCALE
-      print(f"[INFO] Mean reward {mean_reward:.2f} > {LIN_BOOST_REWARD}: "
-            f"x/y velocity commands now x{BOOST_SCALE}", flush=True)
+    import matplotlib
+
+    matplotlib.use("Agg")  # Training renders with EGL; no display needed.
+    import matplotlib.pyplot as plt
+
+    its, rewards = zip(*history)
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(its, rewards, linewidth=1.5)
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Mean episode reward")
+    ax.set_title(f"{Path(self.logger.log_dir).name}: mean reward")
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(self._reward_png, dpi=120)
+    plt.close(fig)
 
   def save(self, path: str, infos=None):
     super().save(path, infos)

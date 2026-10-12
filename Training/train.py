@@ -6,11 +6,16 @@ env, so env i simulates robot i:
   python train.py --num-envs 4096                # flat terrain
   python train.py --num-envs 4096 --task rough   # rough terrain
   python train.py --num-envs 4096 --morphology.seed 7
+  python train.py --num-envs 4096 --plot         # also plot the mean reward
 
 The robots live in a temporary directory that is deleted when training ends;
 the base seed is saved as <log_dir>/morphology_seed.txt (rerun with
 --morphology.seed <seed> to get the same robots). All --env.* and --agent.*
 overrides from the Unitree train script still apply.
+
+With --plot, the mean episode reward per iteration is written to
+<log_dir>/mean_reward.csv and drawn into <log_dir>/mean_reward.png (refreshed
+every 10 iterations and at the end).
 """
 
 import argparse
@@ -21,7 +26,7 @@ import shutil
 import sys
 import tempfile
 import threading
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -64,6 +69,8 @@ class TrainConfig:
   video_length: int = 200
   video_interval: int = 2000
   enable_nan_guard: bool = False
+  plot: bool = False
+  """Plot the mean episode reward per iteration to <log_dir>/mean_reward.png."""
   torchrunx_log_dir: str | None = None
   gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
 
@@ -143,9 +150,16 @@ def run_train(cfg: TrainConfig, log_dir: Path) -> None:
     dump_yaml(log_dir / "params" / "env.yaml", env_cfg)
     dump_yaml(log_dir / "params" / "agent.yaml", agent_cfg)
 
-  runner.learn(
-    num_learning_iterations=cfg.agent.max_iterations, init_at_random_ep_len=True
-  )
+  if cfg.plot:
+    runner.enable_reward_plot()
+  try:
+    runner.learn(
+      num_learning_iterations=cfg.agent.max_iterations, init_at_random_ep_len=True
+    )
+  finally:
+    # Also on Ctrl+C, so the plot covers every logged iteration.
+    if cfg.plot:
+      runner.plot_rewards()
 
   env.close()
 
@@ -221,12 +235,16 @@ def main():
   # The task picks the default env config, so parse it before the rest.
   task_parser = argparse.ArgumentParser(add_help=False)
   task_parser.add_argument("--task", choices=list(ENV_CFGS), default="flat")
+  # mjlab's tyro flags need `--plot True`; accept a bare `--plot` too.
+  task_parser.add_argument("--plot", nargs="?", const="True", default="False",
+                           choices=["True", "False"])
   task_args, remaining_args = task_parser.parse_known_args()
 
   args = tyro.cli(
     TrainConfig,
     args=remaining_args,
-    default=TrainConfig.from_task(task_args.task),
+    default=replace(TrainConfig.from_task(task_args.task),
+                    plot=task_args.plot == "True"),
     prog=sys.argv[0] + f" --task {task_args.task}",
     config=mjlab.TYRO_FLAGS,
   )

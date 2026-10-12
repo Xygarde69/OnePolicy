@@ -9,6 +9,11 @@ from there with the repo's `.venv` (`../.venv/bin/python`).
 
 - Commit regularly, one logical change per commit, and push after committing:
   `git push -u origin main`.
+- Add an entry to `log.txt` (repo root, newest first) for every change: what,
+  why, how it was checked. Fill in the previous entry's commit hash when adding
+  the next one (a commit can't contain its own hash).
+- `python train.py --plot` writes the mean episode reward per iteration to
+  `<log_dir>/mean_reward.csv` / `.png`. Use it to compare reward changes.
 - Don't commit `MUJOCO_LOG.TXT`, the reference PDFs, or `Training/logs/`.
 - Smoke test without training: `python train_test.py --viewer False
   --num-robots 2 --max-seconds 3` (random actions; early illegal_contact
@@ -64,9 +69,3 @@ Tuning notes: the torque weight is an estimate (the paper's robot is 45 kg, ours
 are Go2-sized); if low-speed tracking stalls early in training, halve
 `joint_torques_l2` first. `diagonal_gait` only matters once the command
 curriculum goes well past ~1.5 m/s.
-
-Coupling: `tasks/velocity/rl/runner.py` boosts command ranges x5 when the mean
-episode reward passes `YAW_BOOST_REWARD` / `LIN_BOOST_REWARD`. Any reward
-change shifts the episode-reward scale (the new penalties lower it, the
-tracking-weight ramp raises it), so re-check those thresholds against the
-training curves whenever rewards or weights change.

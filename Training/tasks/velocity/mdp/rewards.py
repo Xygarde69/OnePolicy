@@ -583,6 +583,56 @@ def actuator_headroom(
   return cost
 
 
+def nonfoot_contact(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  force_threshold: float = 10.0,
+) -> torch.Tensor:
+  """Penalize ground contact of non-foot geoms below the termination force.
+
+  Each geom's peak force over the sensor history, as a fraction of the
+  illegal_contact threshold (Go2's [N], scaled by s_m), capped at 1 and
+  summed. Gives a graded signal before the episode-ending contact.
+  """
+  sensor: ContactSensor = env.scene[sensor_name]
+  data = sensor.data
+  threshold = force_threshold * get_morph_scales(env).mass  # [B]
+  if data.force_history is not None:
+    force = torch.norm(data.force_history, dim=-1).amax(dim=-1)  # [B, N]
+  else:
+    assert data.force is not None
+    force = torch.norm(data.force, dim=-1)  # [B, N]
+  return torch.sum(torch.clamp(force / threshold[:, None], max=1.0), dim=1)
+
+
+def stance_width(
+  env: ManagerBasedRlEnv,
+  hip_cfg: SceneEntityCfg,
+  foot_cfg: SceneEntityCfg,
+  min_fraction: float = 0.5,
+) -> torch.Tensor:
+  """Penalize feet drawn in towards (or across) the body midline.
+
+  In the base frame, each foot should stay at least `min_fraction` of its
+  hip's lateral offset out from the midline. The shortfall is divided by the
+  robot's leg length and squared, so narrow and wide bodies are treated
+  alike. `hip_cfg` bodies and `foot_cfg` sites must list legs in the same
+  order.
+  """
+  asset: Entity = env.scene[hip_cfg.name]
+  root_pos = asset.data.root_link_pos_w[:, None, :]
+  root_quat = asset.data.root_link_quat_w[:, None, :]
+  hips = asset.data.body_link_pos_w[:, hip_cfg.body_ids] - root_pos  # [B, N, 3]
+  feet = asset.data.site_pos_w[:, foot_cfg.site_ids] - root_pos
+  quat = root_quat.expand(-1, hips.shape[1], -1)
+  hip_y = quat_apply_inverse(quat, hips)[..., 1]
+  foot_y = quat_apply_inverse(quat, feet)[..., 1]
+  outward = foot_y * torch.sign(hip_y)
+  shortfall = torch.clamp(min_fraction * torch.abs(hip_y) - outward, min=0.0)
+  leg = (get_morph_scales(env).length * NOMINAL_LEG_LENGTH)[:, None]
+  return torch.sum(torch.square(shortfall / leg), dim=1)
+
+
 class variable_posture:
   """Penalize deviation from default pose with speed-dependent tolerance.
 

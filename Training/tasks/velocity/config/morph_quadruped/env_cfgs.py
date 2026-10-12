@@ -136,6 +136,9 @@ def morph_quadruped_rough_env_cfg(
   cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
   cfg.rewards["foot_contact_velocity"].params["asset_cfg"].site_names = site_names
   cfg.rewards["base_height"].params["asset_cfg"].site_names = site_names
+  cfg.rewards["stance_width"].params["hip_cfg"].body_names = tuple(
+    f"{name}_thigh" for name in foot_names)
+  cfg.rewards["stance_width"].params["foot_cfg"].site_names = site_names
 
   # Go2's threshold [N], scaled per robot by mass.
   cfg.terminations["illegal_contact"] = TerminationTermCfg(

@@ -376,6 +376,31 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "mechanical_power": RewardTermCfg(func=mdp.mechanical_power, weight=-0.5),
     "actuator_headroom": RewardTermCfg(func=mdp.actuator_headroom, weight=-1.0),
+    "nonfoot_contact": RewardTermCfg(
+      func=mdp.nonfoot_contact,
+      weight=-1.0,
+      params={"sensor_name": "nonfoot_ground_touch", "force_threshold": 10.0},
+    ),
+    "stance_width": RewardTermCfg(
+      func=mdp.stance_width,
+      weight=-10.0,
+      params={
+        # Set per-robot; legs must pair up, hence preserve_order.
+        "hip_cfg": SceneEntityCfg("robot", body_names=(), preserve_order=True),
+        "foot_cfg": SceneEntityCfg("robot", site_names=(), preserve_order=True),
+      },
+    ),
+    # Free-cadence stepping; foot_gait's fixed clock is tapered off below.
+    "feet_air_time": RewardTermCfg(
+      func=mdp.feet_air_time,
+      weight=0.5,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "threshold": 0.3,
+        "command_name": "twist",
+        "command_threshold": 0.1,
+      },
+    ),
     "stand_still": RewardTermCfg(
       func=mdp.stand_still,
       weight=-1.0,
@@ -427,6 +452,18 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "weight_stages": [
           {"step": 0, "weight": 1.0},
           {"step": 5000 * 24, "weight": 2.0},
+        ],
+      },
+    ),
+    # Hand stepping over from the fixed gait clock to feet_air_time, so each
+    # body can settle on its own cadence.
+    "foot_gait_weight": CurriculumTermCfg(
+      func=mdp.reward_weight,
+      params={
+        "reward_name": "foot_gait",
+        "weight_stages": [
+          {"step": 0, "weight": 0.5},
+          {"step": 5000 * 24, "weight": 0.25},
         ],
       },
     ),

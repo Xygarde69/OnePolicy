@@ -8,17 +8,20 @@ env, so env i simulates robot i:
   python train.py --num-envs 4096 --morphology.seed 7
   python train.py --num-envs 4096 --plot         # also plot the mean reward
   python train.py --num-envs 4096 --generalise   # 1/2 generated, 1/2 real robots
+  python train.py --num-envs 4096 --generalise 0.33 --generalise-robots spot go1
 
 The robots live in a temporary directory that is deleted when training ends;
 the base seed is saved as <log_dir>/morphology_seed.txt (rerun with
 --morphology.seed <seed> to get the same robots). All --env.* and --agent.*
 overrides from the Unitree train script still apply.
 
-With --generalise, half of the envs get generated robots and the other
-half is split equally between proxies of Spot, A1, Barkour v0 and Go2
-(GENERALISE_ROBOTS): each real robot rebuilt in the generated model structure,
-with its own dimensions, masses, joint limits and default pose (see
-generation/proxy.py). Episode reward is then logged per robot type.
+With --generalise F (bare flag: 0.5), a fraction F of the envs (0.33 = 33%)
+is split equally between proxies of the real robots in --generalise-robots
+(default Spot, A1, Barkour v0, Go2; any robot in ../quadrupeds, by name or
+unique partial name) and the rest get generated robots. Each proxy is the real
+robot rebuilt in the generated model structure, with its own dimensions,
+masses, joint limits and default pose (see generation/proxy.py). Episode
+reward is then logged per robot type.
 
 With --plot, the mean episode reward per iteration is written to
 <log_dir>/mean_reward.csv and drawn into <log_dir>/mean_reward.png (refreshed
@@ -53,6 +56,8 @@ from mjlab.utils.wrappers import VideoRecorder  # noqa: E402
 
 from assets.morph_quadruped.constants import INIT_JOINT_POS  # noqa: E402
 from generation.bank import BANK_FILE, MorphologyGenCfg, generate_bank  # noqa: E402
+from generation.catalog import find_robot  # noqa: E402
+from generation.proxy import make_proxy  # noqa: E402
 from tasks.velocity.config.morph_quadruped import (  # noqa: E402
   morph_quadruped_flat_env_cfg,
   morph_quadruped_ppo_runner_cfg,
@@ -78,10 +83,12 @@ class TrainConfig:
   video_interval: int = 2000
   enable_nan_guard: bool = False
   plot: bool = False
-  generalise: bool = False
-  """1/2 generated robots, 1/2 split equally between proxies of
-  GENERALISE_ROBOTS (generation/proxy.py)."""
   """Plot the mean episode reward per iteration to <log_dir>/mean_reward.png."""
+  generalise: float = 0.0
+  """Fraction of envs, in [0, 1), split equally between proxies of
+  generalise_robots (generation/proxy.py); the rest are generated robots."""
+  generalise_robots: tuple[str, ...] = ("spot", "a1", "barkour_v0", "go2")
+  """Real robots (in ../quadrupeds) to train proxies of with --generalise."""
   symmetry: bool = True
   """Left-right mirror data augmentation in PPO (tasks/velocity/rl/symmetry.py).
   The generated robots are left-right symmetric, so every mirrored sample is a
@@ -189,15 +196,25 @@ def run_train(cfg: TrainConfig, log_dir: Path) -> None:
   env.close()
 
 
-GENERALISE_ROBOTS = ("spot", "a1", "barkour_v0", "go2")
-
-
-def generalise_split(num_envs: int) -> dict[str, int]:
-  """Envs per real robot for --generalise: the half of num_envs left after
-  the generated robots, split equally (the first robots take any remainder)."""
-  num_real = num_envs - round(num_envs / 2)
-  share, extra = divmod(num_real, len(GENERALISE_ROBOTS))
-  split = {name: share + (i < extra) for i, name in enumerate(GENERALISE_ROBOTS)}
+def generalise_split(num_envs: int, fraction: float,
+                     robots: tuple[str, ...]) -> dict[str, int]:
+  """Envs per real robot for --generalise: round(fraction * num_envs), split
+  equally between `robots` (the first robots take any remainder)."""
+  if not 0.0 <= fraction < 1.0:
+    raise SystemExit(f"--generalise must be in [0, 1), got {fraction}.")
+  if not robots:
+    raise SystemExit("--generalise-robots is empty.")
+  # Resolve partial names ("spot", "anymal_c") to robot file stems, and build
+  # each proxy once now: the bank builds them only after the generated robots.
+  names = list(dict.fromkeys(find_robot(r).stem for r in robots))
+  for name in names:
+    try:
+      make_proxy(name, INIT_JOINT_POS, MorphologyGenCfg().foot_clearance)
+    except ValueError as e:
+      raise SystemExit(f"--generalise-robots: cannot build a proxy of {name}: {e}")
+  num_real = round(num_envs * fraction)
+  share, extra = divmod(num_real, len(names))
+  split = {name: share + (i < extra) for i, name in enumerate(names)}
   print(f"[INFO] --generalise: {num_envs - num_real} generated robots, "
         + ", ".join(f"{n} x {c}" for n, c in split.items()), flush=True)
   return split
@@ -218,7 +235,8 @@ def launch_training(args: TrainConfig):
   # training ends (multi-GPU workers build their envs later).
   morphology_dir = Path(tempfile.mkdtemp(prefix="morphologies_"))
   try:
-    proxies = (generalise_split(args.env.scene.num_envs)
+    proxies = (generalise_split(args.env.scene.num_envs, args.generalise,
+                                args.generalise_robots)
                if args.generalise else None)
     generate_bank(args.env.scene.num_envs, morphology_dir, args.morphology,
                   INIT_JOINT_POS, proxies)
@@ -275,21 +293,27 @@ def _launch(args: TrainConfig, log_dir: Path) -> None:
 
 def main():
   # The task picks the default env config, so parse it before the rest.
-  task_parser = argparse.ArgumentParser(add_help=False)
+  task_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
   task_parser.add_argument("--task", choices=list(ENV_CFGS), default="flat")
-  # mjlab's tyro flags need `--plot True`; accept bare `--plot` and
-  # `--generalise` too.
-  for flag in ("--plot", "--generalise"):
-    task_parser.add_argument(flag, nargs="?", const="True", default="False",
-                             choices=["True", "False"])
+  # mjlab's tyro flags need `--plot True` and `--x "(a,b)"`; accept bare
+  # `--plot`, bare `--generalise` (0.5) and `--generalise-robots a b` / `a,b`.
+  task_parser.add_argument("--plot", nargs="?", const="True", default="False",
+                           choices=["True", "False"])
+  task_parser.add_argument("--generalise", nargs="?", const=0.5, default=0.0,
+                           type=float)
+  task_parser.add_argument("--generalise-robots", nargs="+")
   task_args, remaining_args = task_parser.parse_known_args()
+  default = replace(TrainConfig.from_task(task_args.task),
+                    plot=task_args.plot == "True",
+                    generalise=task_args.generalise)
+  if task_args.generalise_robots:
+    default = replace(default, generalise_robots=tuple(
+      r for arg in task_args.generalise_robots for r in arg.split(",") if r))
 
   args = tyro.cli(
     TrainConfig,
     args=remaining_args,
-    default=replace(TrainConfig.from_task(task_args.task),
-                    plot=task_args.plot == "True",
-                    generalise=task_args.generalise == "True"),
+    default=default,
     prog=sys.argv[0] + f" --task {task_args.task}",
     config=mjlab.TYRO_FLAGS,
   )

@@ -3,7 +3,26 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-12  --plot: outliers no longer flatten mean_reward.png
+2026-10-12  train.py --generalise F and --generalise-robots
+  - --generalise is now the fraction of envs (in [0, 1)) given to real-robot
+    proxies: 0.33 -> 33%, bare --generalise -> 0.5 (old behaviour). The rest
+    are generated robots.
+  - --generalise-robots picks which real robots (any in quadrupeds/, by name
+    or unique partial name, space- or comma-separated); default Spot, A1,
+    Barkour v0, Go2. Proxies are built once up front, so a robot that can't
+    be proxied (e.g. barkour_vb: no keyframe, zero pose not legs-down) or an
+    ambiguous name fails before the long generation step.
+  - Also fixed the TrainConfig docstrings (plot's had ended up under
+    generalise). README table updated.
+  - Why: choose how much of training goes to real-robot proportions and
+    which robots those are, without editing code.
+  - Checked: CLI parse of bare/valued/`=` forms with and without the robot
+    list (also mixed with --task, --plot, --agent.*); split 4096 x 0.33 over
+    6 robots; errors for 1.0, empty list, unknown and ambiguous names and
+    barkour_vb; 3-iteration training run, 16 envs, 0.33 over go1,anymal_c
+    (11 generated + 3 + 2 proxies), no errors.
+
+2026-10-12  --plot: outliers no longer flatten mean_reward.png (7613653)
   - plot_rewards drops points beyond a fence of 3 IQR + max(|q1|, |q3|, 1)
     (the line breaks there), so the y-axis fits the real curve, and notes
     "N outlier points not drawn". The csv is unchanged.

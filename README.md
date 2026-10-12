@@ -192,7 +192,8 @@ $PY train.py --help                              # all --env.* / --agent.* optio
 | `--video` | `False` | Record training videos |
 | `--plot` | `False` | Plot mean episode reward per iteration, overall and per leg-length third, to `<log_dir>/mean_reward.png` (+ `.csv`) |
 | `--symmetry` | `True` | Left-right mirror data augmentation in PPO |
-| `--generalise` | `False` | 1/2 generated robots, 1/2 split equally between proxies of Spot, A1, Barkour v0 and Go2 (real robots rebuilt in the generated model structure, `generation/proxy.py`); reward logged per robot type |
+| `--generalise` | `0` | Fraction of envs (bare flag: `0.5`; `0.33` = 33%) split equally between proxies of the `--generalise-robots` (real robots rebuilt in the generated model structure, `generation/proxy.py`); the rest are generated. Reward logged per robot type |
+| `--generalise-robots` | `spot a1 barkour_v0 go2` | Real robots in `quadrupeds/` to train proxies of, by name or unique partial name (`--generalise-robots spot go1 anymal_c`) |
 | `--gpu-ids` | `[0]` | GPUs to use (several → torchrunx) |
 
 ### Output

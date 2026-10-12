@@ -30,7 +30,9 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-    self._size_returns = {b: deque(maxlen=100) for b in SIZE_BUCKETS}
+    # (bucket, return) of the last 100 episodes: the same window as rsl_rl's
+    # rewbuffer, so the overall mean is the episode-weighted mean of the thirds.
+    self._sized_returns: deque[tuple[str, float]] = deque(maxlen=100)
     self._track_size_buckets()
 
   def _track_size_buckets(self) -> None:
@@ -49,20 +51,27 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
       if torch.any(done):
         returns = (self.logger.cur_reward_sum + rewards.flatten())[done].tolist()
         for bucket, ret in zip(self._size_bucket[done].tolist(), returns):
-          self._size_returns[SIZE_BUCKETS[bucket]].append(ret)
+          self._sized_returns.append((SIZE_BUCKETS[bucket], ret))
       process(rewards, dones, extras, *a, **kw)
 
     def log_with_sizes(it, *a, **kw):
       log(it, *a, **kw)
       if self.logger.writer is None:
         return
-      for bucket, returns in self._size_returns.items():
-        if returns:
-          self.logger.writer.add_scalar(
-            f"Morphology/mean_reward_{bucket}", statistics.mean(returns), it)
+      for bucket, mean in self._size_means().items():
+        if mean is not None:
+          self.logger.writer.add_scalar(f"Morphology/mean_reward_{bucket}", mean, it)
 
     self.logger.process_env_step = process_and_split
     self.logger.log = log_with_sizes
+
+  def _size_means(self) -> dict[str, float | None]:
+    """Mean recent episode return per size third (None if it has none)."""
+    means = {}
+    for bucket in SIZE_BUCKETS:
+      returns = [r for b, r in self._sized_returns if b == bucket]
+      means[bucket] = statistics.mean(returns) if returns else None
+    return means
 
   def enable_reward_plot(self) -> None:
     """Record and plot the mean episode reward per iteration (rank 0 only)."""
@@ -81,8 +90,7 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
       if not self.logger.rewbuffer:
         return
       mean_reward = statistics.mean(self.logger.rewbuffer)
-      sizes = {b: statistics.mean(r) if r else None
-               for b, r in self._size_returns.items()}
+      sizes = self._size_means()
       self._reward_history.append((it, mean_reward, sizes))
       cells = ",".join("" if v is None else f"{v:.6f}" for v in sizes.values())
       with self._reward_csv.open("a") as f:

@@ -53,6 +53,7 @@ from tasks.velocity.config.morph_quadruped import (  # noqa: E402
   set_morphologies,
 )
 from tasks.velocity.rl import VelocityOnPolicyRunner  # noqa: E402
+from tasks.velocity.rl.symmetry import mirror  # noqa: E402
 
 Task = Literal["flat", "rough"]
 ENV_CFGS = {"flat": morph_quadruped_flat_env_cfg, "rough": morph_quadruped_rough_env_cfg}
@@ -71,6 +72,10 @@ class TrainConfig:
   enable_nan_guard: bool = False
   plot: bool = False
   """Plot the mean episode reward per iteration to <log_dir>/mean_reward.png."""
+  symmetry: bool = True
+  """Left-right mirror data augmentation in PPO (tasks/velocity/rl/symmetry.py).
+  The generated robots are left-right symmetric, so every mirrored sample is a
+  valid one; the policy also learns a symmetric gait."""
   torchrunx_log_dir: str | None = None
   gpu_ids: list[int] | Literal["all"] | None = field(default_factory=lambda: [0])
 
@@ -136,9 +141,19 @@ def run_train(cfg: TrainConfig, log_dir: Path) -> None:
   env = RslRlVecEnvWrapper(env, clip_actions=cfg.agent.clip_actions)
 
   agent_cfg = asdict(cfg.agent)
+  # The runner gets its own copy: rsl_rl adds the symmetry function and the env
+  # to it, which params/agent.yaml can't hold.
+  runner_cfg = asdict(cfg.agent)
+  if cfg.symmetry:
+    runner_cfg["algorithm"]["symmetry_cfg"] = {
+      "use_data_augmentation": True,
+      "use_mirror_loss": False,
+      "mirror_loss_coeff": 0.0,
+      "data_augmentation_func": mirror,
+    }
   env_cfg = asdict(cfg.env)
 
-  runner = VelocityOnPolicyRunner(env, agent_cfg, str(log_dir), device)
+  runner = VelocityOnPolicyRunner(env, runner_cfg, str(log_dir), device)
 
   runner.add_git_repo_to_log(__file__)
   if resume_path is not None:

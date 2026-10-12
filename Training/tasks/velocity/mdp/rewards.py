@@ -13,7 +13,11 @@ from mjlab.utils.lab_api.string import (
   resolve_matching_names_values,
 )
 
-from assets.morph_quadruped.constants import NOMINAL_FOOT_RADIUS
+from assets.morph_quadruped.constants import (
+  NOMINAL_FOOT_RADIUS,
+  NOMINAL_LEG_LENGTH,
+  NOMINAL_MASS,
+)
 
 from .scaling import get_morph_scales, normalized_command
 
@@ -501,6 +505,82 @@ def base_height(
   error = (height - target) / target
   env.extras["log"]["Metrics/base_height_ratio_mean"] = torch.mean(height / target)
   return torch.square(error) * (num_contacts > 0).float()
+
+
+def _joint_order_torques(asset: Entity) -> torch.Tensor:
+  """Applied actuator torques [B, J] in joint order.
+
+  asset.data.actuator_force is in actuator order, which groups joints by
+  actuator config (all hips, then thighs, then calves), not joint order.
+  """
+  torque = asset.data.actuator_force
+  out = torch.zeros_like(asset.data.joint_vel)
+  ctrl_ids = asset.indexing.ctrl_ids.tolist()
+  for act in asset.actuators:
+    local = [ctrl_ids.index(c) for c in act.global_ctrl_ids.tolist()]
+    out[:, act.target_ids] = torque[:, local]
+  return out
+
+
+def mechanical_power(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Positive mechanical power in units of m g sqrt(g L) (dimensionless).
+
+  sum_j max(tau_j * qdot_j, 0) / (m g sqrt(g L)), with m the robot's mass and
+  L its leg length: the Froude power unit, so the value is the same for
+  dynamically similar gaits of any size and stays finite when standing (unlike
+  cost of transport, which divides by speed). Negative (braking) work is not
+  rewarded.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  scales = get_morph_scales(env)
+  torque = _joint_order_torques(asset)
+  power = torch.sum(torch.clamp(torque * asset.data.joint_vel, min=0.0), dim=1)
+  g = 9.81
+  mass = scales.mass * NOMINAL_MASS
+  leg = scales.length * NOMINAL_LEG_LENGTH
+  unit = mass * g * torch.sqrt(g * leg)
+  env.extras["log"]["Metrics/mechanical_power_mean"] = torch.mean(power)
+  return power / unit
+
+
+def actuator_headroom(
+  env: ManagerBasedRlEnv,
+  torque_margin: float = 0.8,
+  velocity_margin: float = 0.9,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize using the last part of each motor's own torque and speed range.
+
+  For every joint, the PD torque the policy asks for (before clipping) is
+  divided by the torque the motor can give at its current speed (the DC motor
+  torque-speed band, see DcMotorActuator._clip_effort), and the joint speed by
+  the motor's speed limit. Each ratio above its margin is penalized squared.
+  Using the requested torque, not the clipped one, keeps commands beyond the
+  band visible (arXiv 2312.17507, Sec. III-D). Ratios, so the weight holds
+  for every robot.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  cost = torch.zeros(env.num_envs, device=env.device)
+  for act in asset.actuators:
+    ids = act.target_ids
+    q = asset.data.joint_pos[:, ids]
+    qd = asset.data.joint_vel[:, ids]
+    requested = (act.stiffness * (asset.data.joint_pos_target[:, ids] - q)
+                 + act.damping * (asset.data.joint_vel_target[:, ids] - qd)
+                 + asset.data.joint_effort_target[:, ids])
+    v_lim = act.velocity_limit_motor
+    v = torch.clamp(qd, -act._vel_at_effort_lim, act._vel_at_effort_lim)
+    upper = torch.clamp(act.saturation_effort * (1.0 - v / v_lim), max=act.force_limit)
+    lower = torch.clamp(act.saturation_effort * (-1.0 - v / v_lim), min=-act.force_limit)
+    available = torch.where(requested >= 0, upper, -lower).clamp(min=1e-6)
+    torque_ratio = torch.abs(requested) / available
+    speed_ratio = torch.abs(qd) / v_lim
+    cost += torch.sum(torch.square(torch.clamp(torque_ratio - torque_margin, min=0.0)), dim=1)
+    cost += torch.sum(torch.square(torch.clamp(speed_ratio - velocity_margin, min=0.0)), dim=1)
+  return cost
 
 
 class variable_posture:

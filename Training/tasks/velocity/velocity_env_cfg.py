@@ -374,6 +374,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
+    "mechanical_power": RewardTermCfg(func=mdp.mechanical_power, weight=-0.5),
+    "actuator_headroom": RewardTermCfg(func=mdp.actuator_headroom, weight=-1.0),
     "stand_still": RewardTermCfg(
       func=mdp.stand_still,
       weight=-1.0,

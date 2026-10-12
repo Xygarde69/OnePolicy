@@ -106,7 +106,7 @@ Commit hashes refer to the commit that made the change.
       episode (Sec. II-E.3): candidates if robots stall on large command
       jumps.
 
-  Checked: train_test.py headless run loads all 19 reward terms and the 3
+  Checked: train_test.py headless run loads all 20 reward terms and the 3
     curriculum terms without errors. Not yet trained; tuning notes in
     CLAUDE.md (halve joint_torques_l2 first if low-speed tracking stalls).
 

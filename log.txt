@@ -3,7 +3,30 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-12  train.py --generalise F and --generalise-robots
+2026-10-12  --generalise trains on the real robots' own models, not proxies
+  - Each --generalise-robots robot gets its own batched sim built from its own
+    MJCF, adapted exactly as play.py does (catalog.real_robot_bank: N copies
+    of the adapted robot, labelled with its name). The generated robots keep
+    theirs. tasks/velocity/rl/multi_env.py (MultiVecEnv) steps the sims one
+    after another and concatenates obs / rewards / dones / time_outs for
+    rsl_rl; logged scalars are averaged weighted by env count; the first sim
+    stands in for config, symmetry maps and ONNX metadata. The runner groups
+    returns by MultiVecEnv.morph_sources.
+  - --generalise-proxies True keeps the old proxy behaviour (one sim).
+  - Real banks are built before the generated robots, so a robot that can't
+    be adapted fails early. drop_body_contact_if_unmatched moved from play.py
+    to env_cfgs.py (both scripts use it). proxy.py docstring: per-robot joint
+    ranges now come from the bank (the old note said they stayed generated).
+  - Why: mjwarp batches one model structure per sim, so real MJCFs couldn't
+    share the generated batch; proxies only approximate them (lumped inertia,
+    primitive collision shapes). One sim per model removes that gap.
+  - Checked: 64 envs, 0.5 over go2,spot, 4 iterations with --plot: three sims,
+    per-robot returns logged, checkpoint + ONNX written. 4096 envs at 0.5 over
+    the 4 default robots: 5.2 s/iteration vs 2.7 s with proxies (1.9x), fits
+    the 6 GB RTX 3060. Plain training (no --generalise, 16 envs) and play.py
+    --robot go2 with the new checkpoint still run.
+
+2026-10-12  train.py --generalise F and --generalise-robots (4169990)
   - --generalise is now the fraction of envs (in [0, 1)) given to real-robot
     proxies: 0.33 -> 33%, bare --generalise -> 0.5 (old behaviour). The rest
     are generated robots.

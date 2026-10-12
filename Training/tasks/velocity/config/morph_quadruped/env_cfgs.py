@@ -4,6 +4,7 @@ Copied from the Unitree Go2 configuration; only the robot differs. Every env
 simulates its own generated robot (see `set_morphologies`).
 """
 
+import re
 from typing import Literal
 
 from pathlib import Path
@@ -12,6 +13,7 @@ from assets.morph_quadruped.constants import (
   NOMINAL_LEG_LENGTH,
   NOMINAL_MASS,
   get_morph_robot_cfg,
+  get_spec,
 )
 from generation.bank import BANK_FILE
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -222,3 +224,30 @@ def set_morphologies(
     morphology_dir / "env_00000.xml", init_joint_pos
   )
   cfg.events["morphology"].params["bank_file"] = str(morphology_dir / BANK_FILE)
+
+
+def drop_body_contact_if_unmatched(env_cfg, xml_path: Path) -> None:
+  """Remove non-foot ground contact sensing if the robot has nothing to sense.
+
+  Robots whose only collision geoms are feet and shins (e.g. a model with a
+  visual-only base and thighs) leave the nonfoot_ground_touch sensor with no
+  geoms, which mjlab rejects. Play then drops the sensor, the illegal_contact
+  termination and the nonfoot_contact reward.
+  """
+  sensor = next(s for s in env_cfg.scene.sensors if s.name == "nonfoot_ground_touch")
+  patterns = sensor.primary.pattern
+  patterns = (patterns,) if isinstance(patterns, str) else patterns
+  excludes = sensor.primary.exclude
+  # get_spec supplies the meshes training uses (generated robots' hip.obj is
+  # not written next to their XML) as well as an adapted robot's own.
+  model = get_spec(str(xml_path)).compile()
+  names = [model.geom(i).name for i in range(model.ngeom)]
+  matched = [n for n in names if any(re.fullmatch(p, n) for p in patterns)
+             and not any(re.fullmatch(e, n) for e in excludes)]
+  if matched:
+    return
+  env_cfg.scene.sensors = tuple(s for s in env_cfg.scene.sensors if s is not sensor)
+  env_cfg.terminations.pop("illegal_contact", None)
+  env_cfg.rewards.pop("nonfoot_contact", None)
+  print("[WARN]: The robot's only collision geoms are feet and shins: base/thigh "
+        "ground contact is not detected (no illegal_contact termination).")

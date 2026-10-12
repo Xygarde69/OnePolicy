@@ -21,7 +21,6 @@ forward/back, left/right = sideways; L1 turns left, R1 turns right (gamepad.py).
 """
 
 import os
-import re
 import secrets
 import shutil
 import sys
@@ -44,7 +43,7 @@ from mjlab.utils.torch import configure_torch_backends  # noqa: E402
 from mjlab.utils.wrappers import VideoRecorder  # noqa: E402
 from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer  # noqa: E402
 
-from assets.morph_quadruped.constants import INIT_JOINT_POS, get_spec  # noqa: E402
+from assets.morph_quadruped.constants import INIT_JOINT_POS  # noqa: E402
 from gamepad import DualSenseGamepad  # noqa: E402
 from generation.adapt import adapt_quadruped  # noqa: E402
 from generation.catalog import (  # noqa: E402
@@ -62,6 +61,7 @@ from tasks.velocity.config.morph_quadruped import (  # noqa: E402
   morph_quadruped_flat_env_cfg,
   morph_quadruped_ppo_runner_cfg,
   morph_quadruped_rough_env_cfg,
+  drop_body_contact_if_unmatched,
   set_morphologies,
 )
 from tasks.velocity.rl import VelocityOnPolicyRunner  # noqa: E402
@@ -191,33 +191,6 @@ def attach_gamepad(env: ManagerBasedRlEnv, cfg: PlayConfig) -> None:
         f"right stick up/down = forward {max_forward:.2f} / back {max_backward:.2f} "
         f"m/s, left/right = sideways {max_lateral:.2f} m/s; L1/R1 = turn left/right "
         f"{max_yaw:.2f} rad/s")
-
-
-def drop_body_contact_if_unmatched(env_cfg, xml_path: Path) -> None:
-  """Remove non-foot ground contact sensing if the robot has nothing to sense.
-
-  Robots whose only collision geoms are feet and shins (e.g. a model with a
-  visual-only base and thighs) leave the nonfoot_ground_touch sensor with no
-  geoms, which mjlab rejects. Play then drops the sensor, the illegal_contact
-  termination and the nonfoot_contact reward.
-  """
-  sensor = next(s for s in env_cfg.scene.sensors if s.name == "nonfoot_ground_touch")
-  patterns = sensor.primary.pattern
-  patterns = (patterns,) if isinstance(patterns, str) else patterns
-  excludes = sensor.primary.exclude
-  # get_spec supplies the meshes training uses (generated robots' hip.obj is
-  # not written next to their XML) as well as an adapted robot's own.
-  model = get_spec(str(xml_path)).compile()
-  names = [model.geom(i).name for i in range(model.ngeom)]
-  matched = [n for n in names if any(re.fullmatch(p, n) for p in patterns)
-             and not any(re.fullmatch(e, n) for e in excludes)]
-  if matched:
-    return
-  env_cfg.scene.sensors = tuple(s for s in env_cfg.scene.sensors if s is not sensor)
-  env_cfg.terminations.pop("illegal_contact", None)
-  env_cfg.rewards.pop("nonfoot_contact", None)
-  print("[WARN]: The robot's only collision geoms are feet and shins: base/thigh "
-        "ground contact is not detected (no illegal_contact termination).")
 
 
 def run_play(cfg: PlayConfig):

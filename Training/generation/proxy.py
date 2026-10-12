@@ -13,8 +13,12 @@ the training convention:
   * collision: base box spanning the real base's collision geoms, foot sphere
     of the real foot radius, thigh/calf cylinders along the real links.
 
-Limits of the approximation, forced by the shared structure: joint ranges and
-axes stay the generated ones (x, y, y; see `check`), inertia tensors lose
+Proxies are used by train.py --generalise-proxies True; by default real
+robots are trained on their own models instead (tasks/velocity/rl/multi_env.py).
+Each proxy carries the real robot's own joint ranges and default pose (bank).
+
+Limits of the approximation, forced by the shared structure: joint axes stay
+the generated ones (x, y, y; see `check`), inertia tensors lose
 their off-diagonal terms (principal axes aligned with the link), the base box
 is centred on the base origin, and visual geoms are the generated primitives.
 """

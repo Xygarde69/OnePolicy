@@ -16,12 +16,15 @@ the base seed is saved as <log_dir>/morphology_seed.txt (rerun with
 overrides from the Unitree train script still apply.
 
 With --generalise F (bare flag: 0.5), a fraction F of the envs (0.33 = 33%)
-is split equally between proxies of the real robots in --generalise-robots
-(default Spot, A1, Barkour v0, Go2; any robot in ../quadrupeds, by name or
-unique partial name) and the rest get generated robots. Each proxy is the real
-robot rebuilt in the generated model structure, with its own dimensions,
-masses, joint limits and default pose (see generation/proxy.py). Episode
-reward is then logged per robot type.
+is split equally between the real robots in --generalise-robots (default
+Spot, A1, Barkour v0, Go2; any robot in ../quadrupeds, by name or unique
+partial name) and the rest get generated robots. Each real robot is trained on
+its own model, adapted as play.py does, in its own batched sim next to the
+generated robots' (mjwarp batches one model structure per sim); PPO learns from
+all sims at once (tasks/velocity/rl/multi_env.py). With --generalise-proxies
+True, real robots are instead rebuilt in the generated structure
+(generation/proxy.py): one sim, faster, but an approximation of the real
+model. Episode reward is logged per robot type.
 
 With --plot, the mean episode reward per iteration is written to
 <log_dir>/mean_reward.csv and drawn into <log_dir>/mean_reward.png (refreshed
@@ -30,6 +33,7 @@ every 10 iterations and at the end).
 
 import argparse
 import contextlib
+import copy
 import logging
 import os
 import shutil
@@ -56,15 +60,16 @@ from mjlab.utils.wrappers import VideoRecorder  # noqa: E402
 
 from assets.morph_quadruped.constants import INIT_JOINT_POS  # noqa: E402
 from generation.bank import BANK_FILE, MorphologyGenCfg, generate_bank  # noqa: E402
-from generation.catalog import find_robot  # noqa: E402
+from generation.catalog import find_robot, real_robot_bank  # noqa: E402
 from generation.proxy import make_proxy  # noqa: E402
 from tasks.velocity.config.morph_quadruped import (  # noqa: E402
   morph_quadruped_flat_env_cfg,
   morph_quadruped_ppo_runner_cfg,
   morph_quadruped_rough_env_cfg,
+  drop_body_contact_if_unmatched,
   set_morphologies,
 )
-from tasks.velocity.rl import VelocityOnPolicyRunner  # noqa: E402
+from tasks.velocity.rl import MultiVecEnv, VelocityOnPolicyRunner  # noqa: E402
 from tasks.velocity.rl.symmetry import mirror  # noqa: E402
 
 Task = Literal["flat", "rough"]
@@ -88,7 +93,10 @@ class TrainConfig:
   """Fraction of envs, in [0, 1), split equally between proxies of
   generalise_robots (generation/proxy.py); the rest are generated robots."""
   generalise_robots: tuple[str, ...] = ("spot", "a1", "barkour_v0", "go2")
-  """Real robots (in ../quadrupeds) to train proxies of with --generalise."""
+  """Real robots (in ../quadrupeds) to train on with --generalise."""
+  generalise_proxies: bool = False
+  """Train on proxies of the real robots (their numbers in the generated
+  structure, one sim) instead of their own models (one extra sim each)."""
   symmetry: bool = True
   """Left-right mirror data augmentation in PPO (tasks/velocity/rl/symmetry.py).
   The generated robots are left-right symmetric, so every mirrored sample is a
@@ -101,7 +109,10 @@ class TrainConfig:
     return TrainConfig(env=ENV_CFGS[task](), agent=morph_quadruped_ppo_runner_cfg())
 
 
-def run_train(cfg: TrainConfig, log_dir: Path) -> None:
+def run_train(cfg: TrainConfig, log_dir: Path,
+              real_banks: tuple[tuple[str, Path, dict], ...] = ()) -> None:
+  """real_banks: (name, bank dir, default pose) of each real robot trained on
+  its own model (--generalise), one extra sim each."""
   cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
   if cuda_visible == "":
     device = "cpu"
@@ -156,6 +167,18 @@ def run_train(cfg: TrainConfig, log_dir: Path) -> None:
     print("[INFO] Recording videos during training.")
 
   env = RslRlVecEnvWrapper(env, clip_actions=cfg.agent.clip_actions)
+  if real_banks:
+    envs = [env]
+    for i, (name, bank_dir, pose) in enumerate(real_banks):
+      real_cfg = copy.deepcopy(cfg.env)
+      real_cfg.scene.num_envs = len(np.load(bank_dir / BANK_FILE)["seeds"])
+      real_cfg.seed = seed + 1000 * (i + 1)
+      set_morphologies(real_cfg, bank_dir, pose)
+      drop_body_contact_if_unmatched(real_cfg, bank_dir / "env_00000.xml")
+      print(f"[INFO] Building the sim of {name} ({real_cfg.scene.num_envs} envs)", flush=True)
+      envs.append(RslRlVecEnvWrapper(ManagerBasedRlEnv(cfg=real_cfg, device=device),
+                                     clip_actions=cfg.agent.clip_actions))
+    env = MultiVecEnv(envs)
 
   agent_cfg = asdict(cfg.agent)
   # The runner gets its own copy: rsl_rl adds the symmetry function and the env
@@ -196,18 +219,19 @@ def run_train(cfg: TrainConfig, log_dir: Path) -> None:
   env.close()
 
 
-def generalise_split(num_envs: int, fraction: float,
-                     robots: tuple[str, ...]) -> dict[str, int]:
+def generalise_split(num_envs: int, fraction: float, robots: tuple[str, ...],
+                     proxies: bool) -> dict[str, int]:
   """Envs per real robot for --generalise: round(fraction * num_envs), split
   equally between `robots` (the first robots take any remainder)."""
   if not 0.0 <= fraction < 1.0:
     raise SystemExit(f"--generalise must be in [0, 1), got {fraction}.")
   if not robots:
     raise SystemExit("--generalise-robots is empty.")
-  # Resolve partial names ("spot", "anymal_c") to robot file stems, and build
-  # each proxy once now: the bank builds them only after the generated robots.
+  # Resolve partial names ("spot", "anymal_c") to robot file stems. Proxies
+  # are built once now, as the bank builds them only after the generated
+  # robots (real models are built before those anyway).
   names = list(dict.fromkeys(find_robot(r).stem for r in robots))
-  for name in names:
+  for name in names if proxies else ():
     try:
       make_proxy(name, INIT_JOINT_POS, MorphologyGenCfg().foot_clearance)
     except ValueError as e:
@@ -235,23 +259,38 @@ def launch_training(args: TrainConfig):
   # training ends (multi-GPU workers build their envs later).
   morphology_dir = Path(tempfile.mkdtemp(prefix="morphologies_"))
   try:
-    proxies = (generalise_split(args.env.scene.num_envs, args.generalise,
-                                args.generalise_robots)
-               if args.generalise else None)
-    generate_bank(args.env.scene.num_envs, morphology_dir, args.morphology,
-                  INIT_JOINT_POS, proxies)
+    split = (generalise_split(args.env.scene.num_envs, args.generalise,
+                              args.generalise_robots, args.generalise_proxies)
+             if args.generalise else {})
+    proxies = split if args.generalise_proxies else None
+    real_banks = []
+    if split and not args.generalise_proxies:
+      # Real models first: a robot that can't be adapted fails before the
+      # long generation step.
+      for name, count in split.items():
+        if count == 0:
+          continue
+        bank_dir = morphology_dir / f"real_{name}"
+        pose, notes = real_robot_bank(name, count, bank_dir, INIT_JOINT_POS)
+        print(f"[INFO] {name} (own model) x {count}"
+              + "".join(f"\n[INFO]   {n}" for n in notes), flush=True)
+        real_banks.append((name, bank_dir, pose))
+      args.env.scene.num_envs -= sum(split.values())
+    generate_bank(args.env.scene.num_envs, morphology_dir / "generated",
+                  args.morphology, INIT_JOINT_POS, proxies)
     log_dir.mkdir(parents=True, exist_ok=True)
-    base_seed = int(np.load(morphology_dir / BANK_FILE)["seeds"][0])
+    base_seed = int(np.load(morphology_dir / "generated" / BANK_FILE)["seeds"][0])
+    kind = "proxies" if proxies else "real models"
     (log_dir / "morphology_seed.txt").write_text(
-      f"{base_seed}\n" + (f"proxies {proxies}\n" if proxies else ""))
-    set_morphologies(args.env, morphology_dir)
-    _launch(args, log_dir)
+      f"{base_seed}\n" + (f"{kind} {split}\n" if split else ""))
+    set_morphologies(args.env, morphology_dir / "generated")
+    _launch(args, log_dir, tuple(real_banks))
   finally:
     shutil.rmtree(morphology_dir, ignore_errors=True)
     print(f"[INFO] Removed generated robots in {morphology_dir}", flush=True)
 
 
-def _launch(args: TrainConfig, log_dir: Path) -> None:
+def _launch(args: TrainConfig, log_dir: Path, real_banks: tuple = ()) -> None:
   # Select GPUs based on CUDA_VISIBLE_DEVICES and user specification.
   selected_gpus, num_gpus = select_gpus(args.gpu_ids)
 
@@ -264,7 +303,7 @@ def _launch(args: TrainConfig, log_dir: Path) -> None:
 
   if num_gpus <= 1:
     # CPU or single GPU: run directly without torchrunx.
-    run_train(args, log_dir)
+    run_train(args, log_dir, real_banks)
   else:
     # Multi-GPU: use torchrunx.
     import torchrunx
@@ -288,7 +327,7 @@ def _launch(args: TrainConfig, log_dir: Path) -> None:
       workers_per_host=num_gpus,
       backend=None,  # Let rsl_rl handle process group initialization.
       copy_env_vars=torchrunx.DEFAULT_ENV_VARS_FOR_COPY + ("MUJOCO*",),
-    ).run(run_train, args, log_dir)
+    ).run(run_train, args, log_dir, real_banks)
 
 
 def main():

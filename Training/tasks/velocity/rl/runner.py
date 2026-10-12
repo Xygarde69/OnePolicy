@@ -43,11 +43,12 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
     if self.logger.log_dir is None or self.logger.disable_logs:
       return
     env = self.env.unwrapped
-    sources = getattr(env, "morph_sources", None)
+    # A MultiVecEnv (train.py --generalise) lists the robots of all its sims.
+    sources = getattr(self.env, "morph_sources", getattr(env, "morph_sources", None))
     if sources is not None and len(set(sources)) > 1:
       self._groups = tuple(dict.fromkeys(sources))  # First-seen order.
       self._size_bucket = torch.tensor([self._groups.index(s) for s in sources],
-                                       device=env.device)
+                                       device=self.env.device)
       self._group_label = {g: g for g in self._groups}
     else:
       self._groups = SIZE_BUCKETS

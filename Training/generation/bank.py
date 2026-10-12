@@ -216,8 +216,10 @@ def _save_bank(out_dir: Path, reference: mujoco.MjModel, seeds,
 def single_robot_bank(xml: str, assets: dict[str, bytes], out_dir: Path,
                       init_joint_pos: dict[str, float],
                       clearance: float = 0.02,
-                      max_joint_velocity: float = DEFAULT_MAX_JOINT_VELOCITY) -> Path:
-  """Bank holding one existing robot (see adapt.py), for play.
+                      max_joint_velocity: float = DEFAULT_MAX_JOINT_VELOCITY,
+                      copies: int = 1, source: str = "generated") -> Path:
+  """Bank holding `copies` envs of one existing robot (see adapt.py): one for
+  play, many for training on a real robot's own model (train.py --generalise).
 
   `assets` are written under the MJCF's meshdir, next to env_00000.xml.
   """
@@ -233,8 +235,9 @@ def single_robot_bank(xml: str, assets: dict[str, bytes], out_dir: Path,
   fields, _, scalars = _extract(model, init_joint_pos, clearance)
   scalars.update(total_mass=model.body_subtreemass[1],
                  max_joint_velocity=max_joint_velocity)
-  return _save_bank(out_dir, model, [-1], {k: [v] for k, v in scalars.items()},
-                    {f: [v] for f, v in fields.items()})
+  return _save_bank(out_dir, model, [-1] * copies,
+                    {k: [v] * copies for k, v in scalars.items()},
+                    {f: [v] * copies for f, v in fields.items()}, [source] * copies)
 
 
 def generate_bank(num_envs: int, out_dir: Path, cfg: MorphologyGenCfg,

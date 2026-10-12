@@ -10,7 +10,7 @@ import json
 import re
 from pathlib import Path
 
-from .adapt import AdaptedRobot, fit_pose
+from .adapt import AdaptedRobot, adapt_quadruped, fit_pose
 
 QUADRUPEDS_DIR = Path(__file__).resolve().parents[2] / "quadrupeds"
 
@@ -90,3 +90,19 @@ def default_pose(robot: AdaptedRobot, xml_path: Path, init_pose: str,
     log.append(f"WARN {message}")
   pose, notes = fit_pose(resolve_pose(train_pose, robot.joint_ranges), robot.joint_ranges)
   return pose, log + ["Default pose: training pose"] + [f"  {n}" for n in notes]
+
+
+def real_robot_bank(name: str, copies: int, out_dir: Path,
+                    train_pose: dict[str, float]) -> tuple[dict[str, float], list[str]]:
+  """Bank of `copies` envs of real robot `name`'s own model, adapted to the
+  training convention exactly as play.py does (train.py --generalise).
+
+  Returns the robot's default pose and what was done, as log lines.
+  """
+  from .bank import single_robot_bank  # bank.py imports nothing from here.
+
+  xml_path = find_robot(name)
+  robot = adapt_quadruped(str(xml_path), robot_defaults(xml_path).get("forward", "auto"))
+  pose, log = default_pose(robot, xml_path, "auto", train_pose)
+  single_robot_bank(robot.xml, robot.assets, out_dir, pose, copies=copies, source=name)
+  return pose, [line for line in log if not line.startswith("  ")]

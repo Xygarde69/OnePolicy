@@ -192,7 +192,8 @@ $PY train.py --help                              # all --env.* / --agent.* optio
 | `--video` | `False` | Record training videos |
 | `--plot` | `False` | Plot mean episode reward per iteration, overall and per leg-length third, to `<log_dir>/mean_reward.png` (+ `.csv`) |
 | `--symmetry` | `True` | Left-right mirror data augmentation in PPO |
-| `--generalise` | `0` | Fraction of envs (bare flag: `0.5`; `0.33` = 33%) split equally between proxies of the `--generalise-robots` (real robots rebuilt in the generated model structure, `generation/proxy.py`); the rest are generated. Reward logged per robot type |
+| `--generalise` | `0` | Fraction of envs (bare flag: `0.5`; `0.33` = 33%) split equally between the `--generalise-robots`, each trained on its own model (adapted as in `play.py`) in its own batched sim next to the generated robots'; the rest are generated. Reward logged per robot type. About 1.9× slower per iteration at 0.5 with 4 robots (RTX 3060, 4096 envs) |
+| `--generalise-proxies` | `False` | Train on proxies instead: real robots rebuilt in the generated model structure (`generation/proxy.py`), one sim, faster, but an approximation of the real model |
 | `--generalise-robots` | `spot a1 barkour_v0 go2` | Real robots in `quadrupeds/` to train proxies of, by name or unique partial name (`--generalise-robots spot go1 anymal_c`) |
 | `--gpu-ids` | `[0]` | GPUs to use (several → torchrunx) |
 

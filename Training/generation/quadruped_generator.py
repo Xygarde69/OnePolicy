@@ -29,7 +29,7 @@ a1_hip_link_length = 0.08100000023841858  # A1 hip link length (hip joint -> thi
 hip_link_length_range = (0.01, 0.5)  # min, max [m]
 hip_link_length_std = 0.05  # [m]
 
-max_joint_velocity_range = (np.pi, 6 * np.pi)  # min, max [rad/s], uniform
+max_joint_velocity = 6 * np.pi  # [rad/s], same for every robot
 
 
 def truncated_normal(mean, std, low, high):
@@ -680,7 +680,6 @@ def create_robot(p,
                               linkJointTypes=linkJointTypes,
                               linkJointAxis=linkJointAxis)
 
-    max_joint_velocity = uniform(*max_joint_velocity_range)
     for joint_index, joint_type in enumerate(linkJointTypes):
         if joint_type == p.JOINT_REVOLUTE:
             p.changeDynamics(obUid, joint_index, maxJointVelocity=max_joint_velocity)

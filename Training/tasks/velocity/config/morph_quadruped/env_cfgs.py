@@ -34,7 +34,11 @@ def morph_quadruped_rough_env_cfg(
   """Create generated-quadruped rough terrain velocity configuration."""
   cfg = make_velocity_env_cfg()
 
-  cfg.sim.mujoco.ccd_iterations = 500
+  # mujoco_warp's EPA scratch scales with num_envs * nconmax * ccd_iterations
+  # (~130 B each): 500 iterations needs ~9.5 GB at 4096 envs, 50 needs ~1 GB.
+  cfg.sim.mujoco.ccd_iterations = 50
+  # Generated robots can start with more contacts than the Go1's 35.
+  cfg.sim.nconmax = 64
   cfg.sim.contact_sensor_maxmatch = 500
 
   # Robot structure and per-env robots are filled in by set_morphologies().
@@ -79,8 +83,9 @@ def morph_quadruped_rough_env_cfg(
       entity="robot",
       # Grab all collision geoms...
       pattern=r".*_collision\d*$",
-      # Except for the foot geoms.
-      exclude=tuple(geom_names),
+      # Except for the foot geoms, and the shin geoms ending in them that
+      # robots adapted for play may have (see generation/adapt.py).
+      exclude=(*geom_names, r"(FR|FL|RR|RL)_shin_\d+_collision$"),
     ),
     secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found", "force"),

@@ -21,6 +21,7 @@ Without --policy, the latest checkpoint of the latest training run is used.
 import os
 import re
 import secrets
+import shutil
 import sys
 import tempfile
 from dataclasses import asdict, dataclass
@@ -130,17 +131,16 @@ def find_robot(name: str, quadrupeds_dir: Path) -> Path:
   raise ValueError(f"Unknown robot '{name}'. Available robots: {listing}")
 
 
-def prepare_robot(cfg: PlayConfig) -> tuple[Path, dict[str, float] | None, str]:
-  """Build the one-robot bank to play. Returns (bank dir, default pose, label)."""
+def prepare_robot(cfg: PlayConfig, robot_dir: Path) -> tuple[dict[str, float] | None, str]:
+  """Build the one-robot bank to play in robot_dir. Returns (default pose, label)."""
   sources = [cfg.random, cfg.robot is not None, cfg.robot_xml != ROBOT_XML]
   if sum(sources) > 1:
     raise ValueError("Pass only one of --random, --robot and --robot-xml.")
-  robot_dir = Path(tempfile.mkdtemp(prefix="play_robot_"))
 
   if cfg.random:
     seed = cfg.seed if cfg.seed is not None else secrets.randbits(31)
     generate_bank(1, robot_dir, MorphologyGenCfg(seed=seed, workers=1), INIT_JOINT_POS)
-    return robot_dir, None, f"random_{seed}"
+    return None, f"random_{seed}"
 
   if cfg.robot is not None:
     xml_path = find_robot(cfg.robot, Path(cfg.quadrupeds_dir))
@@ -183,15 +183,24 @@ def prepare_robot(cfg: PlayConfig) -> tuple[Path, dict[str, float] | None, str]:
 
   single_robot_bank(robot.xml, robot.assets, robot_dir, pose)
   print(f"[INFO]: Adapted robot written to {robot_dir / 'env_00000.xml'}")
-  return robot_dir, pose, xml_path.stem
+  return pose, xml_path.stem
 
 
 def run_play(cfg: PlayConfig):
+  # The robot is deleted when play ends, however it ends.
+  robot_dir = Path(tempfile.mkdtemp(prefix="play_robot_"))
+  try:
+    _play(cfg, robot_dir)
+  finally:
+    shutil.rmtree(robot_dir, ignore_errors=True)
+
+
+def _play(cfg: PlayConfig, robot_dir: Path):
   configure_torch_backends()
 
   device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
 
-  robot_dir, pose, label = prepare_robot(cfg)
+  pose, label = prepare_robot(cfg, robot_dir)
 
   env_cfg = (morph_quadruped_flat_env_cfg if cfg.task == "flat"
              else morph_quadruped_rough_env_cfg)(play=True)

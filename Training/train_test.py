@@ -24,6 +24,7 @@ that alone is not a bug. A termination before landing (~0.1 s) is.
 import os
 import sys
 import secrets
+import shutil
 import tempfile
 import time
 from dataclasses import dataclass, replace
@@ -237,13 +238,18 @@ def main():
   base_seed = cfg.seed if cfg.seed is not None else secrets.randbits(31)
   root = Path(tempfile.mkdtemp(prefix="train_test_"))
   print(f"[INFO] {cfg.num_robots} robots, base seed {base_seed}, "
-        f"{cfg.actions} actions, robots in {root}")
+        f"{cfg.actions} actions")
 
   results = []
-  for i in range(cfg.num_robots):
-    seed = base_seed + i
-    print(f"\n=== robot {i + 1}/{cfg.num_robots} (seed {seed}) ===")
-    results.append((seed, run_robot(cfg, seed, root / f"robot_{i:02d}", device)))
+  try:
+    for i in range(cfg.num_robots):
+      seed = base_seed + i
+      print(f"\n=== robot {i + 1}/{cfg.num_robots} (seed {seed}) ===")
+      robot_dir = root / f"robot_{i:02d}"
+      results.append((seed, run_robot(cfg, seed, robot_dir, device)))
+      shutil.rmtree(robot_dir, ignore_errors=True)
+  finally:
+    shutil.rmtree(root, ignore_errors=True)
 
   print("\n=== summary ===")
   for seed, result in results:

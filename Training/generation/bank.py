@@ -39,7 +39,7 @@ STRUCTURE_FIELDS = ("body_parentid", "body_sameframe", "body_simple", "jnt_type"
 BANK_FILE = "morphologies.npz"
 
 # Joint velocity limit [rad/s] for robots not made by create_robot (adapt.py):
-# the top of its max_joint_velocity_range, the fastest robots seen in training.
+# the same fixed max_joint_velocity create_robot gives every robot.
 DEFAULT_MAX_JOINT_VELOCITY = 6 * np.pi
 
 

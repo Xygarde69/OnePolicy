@@ -7,14 +7,20 @@ env, so env i simulates robot i:
   python train.py --num-envs 4096 --task rough   # rough terrain
   python train.py --num-envs 4096 --morphology.seed 7
 
-The robots are saved as <log_dir>/morphologies/env_XXXXX.xml. All --env.* and
---agent.* overrides from the Unitree train script still apply.
+The robots live in a temporary directory that is deleted when training ends;
+the base seed is saved as <log_dir>/morphology_seed.txt (rerun with
+--morphology.seed <seed> to get the same robots). All --env.* and --agent.*
+overrides from the Unitree train script still apply.
 """
 
 import argparse
+import contextlib
 import logging
 import os
+import shutil
 import sys
+import tempfile
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +28,7 @@ from typing import Literal
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import numpy as np  # noqa: E402
 import tyro  # noqa: E402
 
 import mjlab  # noqa: E402
@@ -33,7 +40,7 @@ from mjlab.utils.torch import configure_torch_backends  # noqa: E402
 from mjlab.utils.wrappers import VideoRecorder  # noqa: E402
 
 from assets.morph_quadruped.constants import INIT_JOINT_POS  # noqa: E402
-from generation.bank import MorphologyGenCfg, generate_bank  # noqa: E402
+from generation.bank import BANK_FILE, MorphologyGenCfg, generate_bank  # noqa: E402
 from tasks.velocity.config.morph_quadruped import (  # noqa: E402
   morph_quadruped_flat_env_cfg,
   morph_quadruped_ppo_runner_cfg,
@@ -154,10 +161,23 @@ def launch_training(args: TrainConfig):
   # Procedurally generate and compile one robot per env, before any worker starts.
   if args.num_envs is not None:
     args.env.scene.num_envs = args.num_envs
-  morphology_dir = log_dir / "morphologies"
-  generate_bank(args.env.scene.num_envs, morphology_dir, args.morphology, INIT_JOINT_POS)
-  set_morphologies(args.env, morphology_dir)
+  # The robots are only read while the envs are built, but are kept until
+  # training ends (multi-GPU workers build their envs later).
+  morphology_dir = Path(tempfile.mkdtemp(prefix="morphologies_"))
+  try:
+    generate_bank(args.env.scene.num_envs, morphology_dir, args.morphology,
+                  INIT_JOINT_POS)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    base_seed = int(np.load(morphology_dir / BANK_FILE)["seeds"][0])
+    (log_dir / "morphology_seed.txt").write_text(f"{base_seed}\n")
+    set_morphologies(args.env, morphology_dir)
+    _launch(args, log_dir)
+  finally:
+    shutil.rmtree(morphology_dir, ignore_errors=True)
+    print(f"[INFO] Removed generated robots in {morphology_dir}", flush=True)
 
+
+def _launch(args: TrainConfig, log_dir: Path) -> None:
   # Select GPUs based on CUDA_VISIBLE_DEVICES and user specification.
   selected_gpus, num_gpus = select_gpus(args.gpu_ids)
 
@@ -212,7 +232,44 @@ def main():
   )
   del remaining_args
 
-  launch_training(args)
+  with _drop_hfield_overflow_warnings():
+    launch_training(args)
+
+
+# Printed by mujoco_warp's heightfield collider (on the GPU, so it can't be
+# silenced from Python) when a large generated base lands on rough terrain and
+# touches more than 50 triangles. The deepest contacts are still kept and
+# illegal_contact ends the episode, so the message is only noise.
+_HFIELD_OVERFLOW_LINES = (
+  b"height field collision overflow",
+  b" decrease the number of hfield rows/cols",
+)
+
+
+@contextlib.contextmanager
+def _drop_hfield_overflow_warnings():
+  """Filter the heightfield overflow message out of the process's stdout fd."""
+  sys.stdout.flush()
+  real_stdout = os.dup(1)
+  read_fd, write_fd = os.pipe()
+  os.dup2(write_fd, 1)
+  os.close(write_fd)
+
+  def forward():
+    with os.fdopen(read_fd, "rb") as pipe:
+      for line in pipe:
+        if not line.startswith(_HFIELD_OVERFLOW_LINES):
+          os.write(real_stdout, line)
+
+  thread = threading.Thread(target=forward, daemon=True)
+  thread.start()
+  try:
+    yield
+  finally:
+    sys.stdout.flush()
+    os.dup2(real_stdout, 1)  # Closes the pipe's write end, ending forward().
+    thread.join(timeout=5.0)
+    os.close(real_stdout)
 
 
 if __name__ == "__main__":

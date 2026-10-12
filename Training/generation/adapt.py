@@ -19,6 +19,8 @@ policy sees it exactly like a training robot:
 
   * bodies, joints, feet, sites and sensors get the Go2 names
     (see mjcf_builder.py),
+  * collision geoms that reach the foot's tip (shins ending in the foot) are
+    named {leg}_shin_N_collision; the illegal-contact termination skips them,
   * legs are reordered to the training joint order FR, FL, RR, RL,
   * joint axes pointing the "wrong" way (-x / -y) are flipped, along with their
     ranges, so that positive angles mean the same motion on every robot,
@@ -43,6 +45,12 @@ JOINT_ROLES = ("hip", "thigh", "calf")  # Go2 names for abduction, hip, knee.
 EXPECTED_AXES = (np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]),
                  np.array([0.0, 1.0, 0.0]))
 MIN_AXIS_ALIGNMENT = 0.9  # |cos| between a joint axis and its expected axis.
+# Collision geoms below the knee that reach within this fraction of the shin
+# length of the foot's tip are part of the foot ("shin" geoms): they touch the
+# ground whenever the foot does (A1's calf capsule, Barkour's lower-leg mesh),
+# so the illegal-contact termination ignores them. Go2's lowest calf geom stops
+# 0.23 shin lengths short of its foot tip; Go1, Spot and ANYmal shins ~0.1.
+SHIN_TIP_FRACTION = 0.15
 
 # Attributes that refer to other elements by name, per element kind.
 _REFERENCE_ATTRS = {
@@ -156,6 +164,14 @@ def _lowest_point(model, data, g) -> float:
   center, half = model.geom_aabb[g].reshape(2, 3)
   corners = np.array([center + half * np.array(s) for s in product((-1, 1), repeat=3)])
   return float((data.geom_xpos[g] + corners @ data.geom_xmat[g].reshape(3, 3).T)[:, 2].min())
+
+
+def _reach(model, data, g, origin, direction) -> float:
+  """How far geom g's bounding box extends from `origin` along `direction`."""
+  center, half = model.geom_aabb[g].reshape(2, 3)
+  corners = np.array([center + half * np.array(s) for s in product((-1, 1), repeat=3)])
+  world = data.geom_xpos[g] + corners @ data.geom_xmat[g].reshape(3, 3).T
+  return float(((world - origin) @ direction).max())
 
 
 Forward = Literal["auto", "+x", "-x", "+y", "-y"]
@@ -320,6 +336,25 @@ def adapt_quadruped(xml_path: str, forward: Forward = "auto") -> AdaptedRobot:
       raise ConventionError(f"Leg {label} has no collision geom below its knee (foot).")
     feet[label] = min(candidates, key=lambda g: _lowest_point(model, data, g))
 
+  # Shin geoms: other collision geoms below the knee that reach (nearly) as far
+  # along the shin as the foot. Measured along knee -> foot, so the pose the
+  # XML happens to compile in doesn't matter.
+  shins: dict[str, list[int]] = {}
+  for label, (_, joints) in leg_info.items():
+    knee = data.xanchor[joints[2]]
+    shin = data.geom_xpos[feet[label]] - knee
+    direction = shin / np.linalg.norm(shin)
+    tip = _reach(model, data, feet[label], knee, direction)
+    knee_bodies = subtree(int(model.jnt_bodyid[joints[2]]))
+    shins[label] = [
+      g for g in range(model.ngeom)
+      if is_collision[g] and g != feet[label] and model.geom_bodyid[g] in knee_bodies
+      and tip - _reach(model, data, g, knee, direction) < SHIN_TIP_FRACTION * tip]
+    for g in shins[label]:
+      report.append(f"{model.geom(g).name or f'geom {g}'} reaches the {label} foot tip: "
+                    "shin geom (ignored by the illegal-contact termination)")
+  shin_label = {g: label for label, gs in shins.items() for g in gs}
+
   # Zero pose convention: each foot straight below its hip (thigh) joint.
   zero_pose_straight = True
   for label, (_, joints) in leg_info.items():
@@ -336,7 +371,8 @@ def adapt_quadruped(xml_path: str, forward: Forward = "auto") -> AdaptedRobot:
                      [body_el(int(model.jnt_bodyid[j])) for j in joints])
              for label, (top, joints) in leg_info.items()}
   foot_els = {label: (geom_el(g), body_el(int(model.geom_bodyid[g]))) for label, g in feet.items()}
-  collision_els = [(geom_el(g), model.body(int(model.geom_bodyid[g])).name or f"body{model.geom_bodyid[g]}")
+  collision_els = [(geom_el(g), model.body(int(model.geom_bodyid[g])).name or f"body{model.geom_bodyid[g]}",
+                    shin_label.get(g))
                    for g in range(model.ngeom)
                    if is_collision[g] and g not in feet.values()
                    and model.geom_bodyid[g] != 0]  # World geoms (floors) are removed.
@@ -417,8 +453,8 @@ def adapt_quadruped(xml_path: str, forward: Forward = "auto") -> AdaptedRobot:
     pos = model.geom_pos[feet[label]]
     ET.SubElement(foot_body, "site", name=label, pos=_fmt(pos), size="0.01",
                   group="5", rgba="1 0 0 1")
-  for k, (geom, body_name) in enumerate(collision_els):
-    rename("geom", geom, f"{body_name}_{k}_collision")
+  for k, (geom, body_name, shin) in enumerate(collision_els):
+    rename("geom", geom, f"{shin}_shin_{k}_collision" if shin else f"{body_name}_{k}_collision")
 
   if not any(s.get("name") == "imu" for s in _own_children(base_el, ("site",))):
     for site in root.iter("site"):

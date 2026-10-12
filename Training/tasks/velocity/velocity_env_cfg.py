@@ -335,13 +335,35 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "soft_landing": RewardTermCfg(
       func=mdp.soft_landing,
-      weight=-1e-3,
+      weight=-5e-4,  # Halved: foot_contact_velocity now penalizes impacts.
       params={
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
         "command_threshold": 0.1,
       },
     ),
+    # KAIST Hound terms (arXiv 2312.17507, Table I), weights relative to
+    # track_linear_velocity = 1 (the paper's are relative to 6).
+    "foot_contact_velocity": RewardTermCfg(
+      func=mdp.foot_contact_velocity,
+      weight=-0.5,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+      },
+    ),
+    "diagonal_gait": RewardTermCfg(
+      func=mdp.diagonal_gait,
+      weight=0.2,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "command_name": "twist",
+        "command_threshold": 1.5,
+      },
+    ),
+    "joint_torques_l2": RewardTermCfg(func=mdp.scaled_joint_torques_l2, weight=-1e-4),
+    "joint_vel_l2": RewardTermCfg(func=mdp.scaled_joint_vel_l2, weight=-5e-5),
+    "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
     "stand_still": RewardTermCfg(
       func=mdp.stand_still,
       weight=-1.0,
@@ -381,6 +403,28 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "velocity_stages": [
           {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.0, 1.0)},
           {"step": 5000 * 24, "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.0, 1.0)},
+        ],
+      },
+    ),
+    # Raise tracking with the command range so the effort penalties don't make
+    # the robot give up on fast commands (arXiv 2312.17507, Sec. II-E.3).
+    "track_linear_velocity_weight": CurriculumTermCfg(
+      func=mdp.reward_weight,
+      params={
+        "reward_name": "track_linear_velocity",
+        "weight_stages": [
+          {"step": 0, "weight": 1.0},
+          {"step": 5000 * 24, "weight": 2.0},
+        ],
+      },
+    ),
+    "track_angular_velocity_weight": CurriculumTermCfg(
+      func=mdp.reward_weight,
+      params={
+        "reward_name": "track_angular_velocity",
+        "weight_stages": [
+          {"step": 0, "weight": 1.0},
+          {"step": 5000 * 24, "weight": 1.5},
         ],
       },
     ),

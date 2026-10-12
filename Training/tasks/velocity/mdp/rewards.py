@@ -361,6 +361,101 @@ def soft_landing(
   return cost
 
 
+class foot_contact_velocity:
+  """Penalize foot vertical speed in the step just before touchdown.
+
+  KAIST Hound's contact velocity term (arXiv 2312.17507, Table I): the squared
+  vertical foot velocity of the step before first contact. Speed squared
+  scales with s_L, so the cost is divided by it.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    num_feet = len(cfg.params["asset_cfg"].site_names)
+    self.prev_vel_z = torch.zeros(
+      (env.num_envs, num_feet), device=env.device, dtype=torch.float32
+    )
+
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    if env_ids is None:
+      env_ids = slice(None)
+    self.prev_vel_z[env_ids] = 0.0
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    asset_cfg: SceneEntityCfg,
+  ) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene[sensor_name]
+    first_contact = contact_sensor.compute_first_contact(dt=env.step_dt).float()
+    impact_vel_sq = torch.square(self.prev_vel_z) * first_contact  # [B, N]
+    cost = torch.sum(impact_vel_sq, dim=1) / get_morph_scales(env).length
+    num_landings = torch.sum(first_contact)
+    env.extras["log"]["Metrics/contact_velocity_mean"] = torch.sum(
+      torch.sqrt(impact_vel_sq)
+    ) / torch.clamp(num_landings, min=1)
+    self.prev_vel_z = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, 2].clone()
+    return cost
+
+
+def diagonal_gait(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  command_name: str,
+  command_threshold: float = 1.5,
+) -> torch.Tensor:
+  """Reward stance on exactly one diagonal leg pair (no gait clock).
+
+  KAIST Hound's gait term (arXiv 2312.17507, Table I), which spreads torque
+  evenly over the legs at speed. Feet are ordered FR, FL, RR, RL, so the
+  diagonal pairs are (FR, RL) and (FL, RR). Active only for commands above
+  `command_threshold` [Go2 m/s], where the clocked `feet_gait` cadence limits
+  the stride.
+  """
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+  assert contact_sensor.data.found is not None
+  c = contact_sensor.data.found > 0  # [B, 4]
+  pair_a = c[:, 0] & c[:, 3] & ~c[:, 1] & ~c[:, 2]
+  pair_b = c[:, 1] & c[:, 2] & ~c[:, 0] & ~c[:, 3]
+  reward = (pair_a | pair_b).float()
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+  command = normalized_command(env, command)
+  total_command = torch.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
+  return reward * (total_command > command_threshold).float()
+
+
+def scaled_joint_torques_l2(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize applied joint torques, in Go2 units.
+
+  Torques scale with s_m * s_L (as the actuators do, see morphology.py), so
+  they are divided by it before squaring.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  scales = get_morph_scales(env)
+  torque = asset.data.actuator_force[:, asset_cfg.actuator_ids]
+  torque = torque / (scales.mass * scales.length)[:, None]
+  return torch.sum(torch.square(torque), dim=1)
+
+
+def scaled_joint_vel_l2(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize joint velocities, in Go2 units.
+
+  Joint speed scales with 1 / time scale = s_L^-0.5, so its square is
+  multiplied by s_L.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  vel_sq = torch.sum(torch.square(asset.data.joint_vel[:, asset_cfg.joint_ids]), dim=1)
+  return vel_sq * get_morph_scales(env).length
+
+
 class variable_posture:
   """Penalize deviation from default pose with speed-dependent tolerance.
 

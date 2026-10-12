@@ -79,6 +79,34 @@ def _posed(model: mujoco.MjModel, init_joint_pos: dict[str, float]) -> mujoco.Mj
   return data
 
 
+def foot_point(model: mujoco.MjModel, data: mujoco.MjData, g: int) -> tuple[np.ndarray, float]:
+  """World "foot centre" of foot geom g and the radius below it.
+
+  Sphere: its centre and radius (the generated robots' and Go2's convention).
+  Capsule / cylinder: centre of its lower end cap and its radius. Mesh: its
+  lowest vertex, radius 0 (a calf mesh ending in the foot). Other shapes: the
+  lowest point of the bounding box below the geom centre, radius 0. Assumes
+  the legs hang down (zero / default pose).
+  """
+  pos = data.geom_xpos[g].copy()
+  rot = data.geom_xmat[g].reshape(3, 3)
+  kind = model.geom_type[g]
+  if kind == mujoco.mjtGeom.mjGEOM_SPHERE:
+    return pos, float(model.geom_size[g][0])
+  if kind in (mujoco.mjtGeom.mjGEOM_CAPSULE, mujoco.mjtGeom.mjGEOM_CYLINDER):
+    ends = [pos + s * model.geom_size[g][1] * rot[:, 2] for s in (-1.0, 1.0)]
+    return min(ends, key=lambda p: p[2]), float(model.geom_size[g][0])
+  if kind == mujoco.mjtGeom.mjGEOM_MESH:
+    m = model.geom_dataid[g]
+    verts = model.mesh_vert[model.mesh_vertadr[m]:model.mesh_vertadr[m] + model.mesh_vertnum[m]]
+    world = pos + verts @ rot.T
+    return world[np.argmin(world[:, 2])], 0.0
+  center, half = model.geom_aabb[g].reshape(2, 3)
+  corners = np.array([center + half * (2 * np.array(s) - 1) for s in np.ndindex(2, 2, 2)])
+  low = (pos + corners @ rot.T)[:, 2].min()
+  return np.array([pos[0], pos[1], low]), 0.0
+
+
 def _base_above_feet(model: mujoco.MjModel, init_joint_pos: dict[str, float]) -> float:
   """Base height above the mean foot-site height in the default pose [m].
 
@@ -97,16 +125,17 @@ def _standing_height(model: mujoco.MjModel, init_joint_pos: dict[str, float],
   feet = [model.geom(f"{leg}_foot_collision").id for leg in ("FL", "FR", "RL", "RR")]
 
   def bottom(g):
-    # Exact for spheres; the bounding sphere is a safe bound for other shapes.
-    if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_SPHERE:
-      return data.geom_xpos[g][2] - model.geom_size[g][0]
-    return data.geom_xpos[g][2] - model.geom_rbound[g]
+    point, radius = foot_point(model, data, g)
+    return point[2] - radius
 
   return clearance - min(bottom(g) for g in feet)
 
 
 def _leg_dimensions(model: mujoco.MjModel) -> tuple[float, float]:
   """Mean leg length (thigh joint -> knee -> foot centre) and foot radius [m].
+
+  The foot centre is `foot_point`'s (a calf mesh's lowest vertex, not its
+  middle).
 
   Measured in the zero pose, so it works for any robot in the Go2 naming
   convention (generated or adapted).
@@ -117,10 +146,9 @@ def _leg_dimensions(model: mujoco.MjModel) -> tuple[float, float]:
   for leg in ("FL", "FR", "RL", "RR"):
     hip = data.xanchor[model.joint(f"{leg}_thigh_joint").id]
     knee = data.xanchor[model.joint(f"{leg}_calf_joint").id]
-    g = model.geom(f"{leg}_foot_collision").id
-    lengths.append(np.linalg.norm(knee - hip) + np.linalg.norm(data.geom_xpos[g] - knee))
-    radii.append(model.geom_size[g][0] if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_SPHERE
-                 else model.geom_rbound[g])
+    foot, radius = foot_point(model, data, model.geom(f"{leg}_foot_collision").id)
+    lengths.append(np.linalg.norm(knee - hip) + np.linalg.norm(foot - knee))
+    radii.append(radius)
   return float(np.mean(lengths)), float(np.mean(radii))
 
 

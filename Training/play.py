@@ -20,6 +20,7 @@ Without --policy, the latest checkpoint of the latest training run is used.
 forward/back, left/right = sideways; L1 turns left, R1 turns right (gamepad.py).
 """
 
+import json
 import os
 import re
 import secrets
@@ -32,6 +33,7 @@ from typing import Literal
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import mujoco  # noqa: E402
 import torch  # noqa: E402
 import tyro  # noqa: E402
 
@@ -150,6 +152,22 @@ def find_robot(name: str, quadrupeds_dir: Path) -> Path:
   raise ValueError(f"Unknown robot '{name}'. Available robots: {listing}")
 
 
+def robot_defaults(xml_path: Path) -> dict:
+  """Optional play.json next to a robot's MJCF, for what 'auto' can't infer.
+
+  Keys: "forward" (+x/-x/+y/-y), used when --forward is auto. E.g. a robot
+  whose front legs sit at -x: {"forward": "-x"}.
+  """
+  path = xml_path.parent / "play.json"
+  if not path.is_file():
+    return {}
+  defaults = json.loads(path.read_text())
+  unknown = set(defaults) - {"forward"}
+  if unknown:
+    raise ValueError(f"{path}: unknown keys {sorted(unknown)}")
+  return defaults
+
+
 def prepare_robot(cfg: PlayConfig, robot_dir: Path) -> tuple[dict[str, float] | None, str]:
   """Build the one-robot bank to play in robot_dir. Returns (default pose, label)."""
   sources = [cfg.random, cfg.robot is not None, cfg.robot_xml != ROBOT_XML]
@@ -172,8 +190,14 @@ def prepare_robot(cfg: PlayConfig, robot_dir: Path) -> tuple[dict[str, float] | 
       )
   print(f"[INFO]: Robot: {xml_path}")
 
+  # Per-robot defaults for options left on "auto" (see robot_defaults).
+  defaults = robot_defaults(xml_path)
+  forward = defaults.get("forward", "auto") if cfg.forward == "auto" else cfg.forward
+  if forward != cfg.forward:
+    print(f"[INFO]: Forward axis {forward} (from {xml_path.parent / 'play.json'})")
+
   # Rewrite the robot into the training convention.
-  robot = adapt_quadruped(str(xml_path), cfg.forward)
+  robot = adapt_quadruped(str(xml_path), forward)
   for line in robot.report:
     print(f"[INFO]: {line}")
   use_keyframe = cfg.init_pose == "keyframe" or (
@@ -231,6 +255,31 @@ def attach_gamepad(env: ManagerBasedRlEnv, cfg: PlayConfig) -> None:
         f"{max_yaw:.2f} rad/s")
 
 
+def drop_body_contact_if_unmatched(env_cfg, xml_path: Path) -> None:
+  """Remove non-foot ground contact sensing if the robot has nothing to sense.
+
+  Robots whose only collision geoms are feet and shins (e.g. a model with a
+  visual-only base and thighs) leave the nonfoot_ground_touch sensor with no
+  geoms, which mjlab rejects. Play then drops the sensor, the illegal_contact
+  termination and the nonfoot_contact reward.
+  """
+  sensor = next(s for s in env_cfg.scene.sensors if s.name == "nonfoot_ground_touch")
+  patterns = sensor.primary.pattern
+  patterns = (patterns,) if isinstance(patterns, str) else patterns
+  excludes = sensor.primary.exclude
+  model = mujoco.MjModel.from_xml_path(str(xml_path))
+  names = [model.geom(i).name for i in range(model.ngeom)]
+  matched = [n for n in names if any(re.fullmatch(p, n) for p in patterns)
+             and not any(re.fullmatch(e, n) for e in excludes)]
+  if matched:
+    return
+  env_cfg.scene.sensors = tuple(s for s in env_cfg.scene.sensors if s is not sensor)
+  env_cfg.terminations.pop("illegal_contact", None)
+  env_cfg.rewards.pop("nonfoot_contact", None)
+  print("[WARN]: The robot's only collision geoms are feet and shins: base/thigh "
+        "ground contact is not detected (no illegal_contact termination).")
+
+
 def run_play(cfg: PlayConfig):
   # The robot is deleted when play ends, however it ends.
   robot_dir = Path(tempfile.mkdtemp(prefix="play_robot_"))
@@ -252,6 +301,7 @@ def _play(cfg: PlayConfig, robot_dir: Path):
   agent_cfg = morph_quadruped_ppo_runner_cfg()
   env_cfg.scene.num_envs = 1
   set_morphologies(env_cfg, robot_dir, pose)
+  drop_body_contact_if_unmatched(env_cfg, robot_dir / "env_00000.xml")
   env_cfg.events["morphology"].params["scale_actuators"] = cfg.scale_actuators
 
   DUMMY_MODE = cfg.agent in {"zero", "random"}

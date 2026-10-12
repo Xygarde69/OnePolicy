@@ -1,0 +1,197 @@
+<mujoco model="Assem1_AK60">
+  <!--
+    AK60-6 V3.0 (KV80) + external 5.8:1 stage, 70 % efficiency on the external stage, 48 V bus
+    =============================================================================================
+    total ratio              = 6 * 5.8                   = 34.8
+    joint peak torque        = 9 Nm  * 5.8 * 0.70        = 36.54 Nm
+    joint rated torque       = 3 Nm  * 5.8 * 0.70        = 12.18 Nm
+    joint no-load speed      = 640 rpm / 5.8             = 11.55 rad/s   (24 V bus: 5.78 rad/s)
+    joint rated speed        = 490 rpm / 5.8             = 8.85 rad/s
+    reflected rotor inertia  = 2.435e-5 kg m^2 * 34.8^2  = 0.0295 kg m^2 (joint armature)
+    dry friction (back-drive)= 0.2 Nm * 5.8 / 0.70       = 1.66 Nm      (joint frictionloss)
+    link mass                = 0.38 (AK60) + 1.0         = 1.38 kg ; base_link = 10 kg
+
+    Actuators = direct torque (motor), one ctrl per joint, in Nm, clamped to +-36.54 Nm.
+      Run the PD law outside:  tau = kp*(q_des - q) + kd*(dq_des - dq) + tau_ff
+      ctrl order: hip, hip_2, knee for FR, FL, RR, RL  -> 12 values
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+  <option timestep="0.002" integrator="implicitfast"/>
+
+  <default>
+    <joint armature="0.0295" damping="0.1" frictionloss="1.66" actuatorfrcrange="-36.54 36.54"/>
+    <motor ctrlrange="-36.54 36.54"/>
+    <default class="visual">
+      <geom type="mesh" rgba="1 1 1 1" contype="0" conaffinity="0" group="1"/>
+    </default>
+    <default class="collision">
+      <geom type="mesh" rgba="1 1 1 1" contype="1" conaffinity="0" friction="1 0.005 0.0001"/>
+    </default>
+  </default>
+
+  <asset>
+    <texture name="skybox" type="skybox" builtin="gradient" rgb1="0.6 0.75 0.9" rgb2="0.05 0.05 0.1" width="512" height="3072"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.25 0.28 0.32" rgb2="0.18 0.2 0.24" width="300" height="300"/>
+    <material name="grid" texture="grid" texrepeat="6 6" texuniform="true" reflectance="0.1"/>
+
+    <mesh name="base_link" content_type="model/stl" file="base_link.STL" inertia="convex"/>
+    <mesh name="hip_fr" content_type="model/stl" file="hip_fr.STL"/>
+    <mesh name="Thigh_fr" content_type="model/stl" file="Thigh_fr.STL"/>
+    <mesh name="calf_fr" content_type="model/stl" file="calf_fr.STL"/>
+    <mesh name="hip_fl" content_type="model/stl" file="hip_fl.STL"/>
+    <mesh name="thigh_fl" content_type="model/stl" file="thigh_fl.STL"/>
+    <mesh name="calf_fl" content_type="model/stl" file="calf_fl.STL"/>
+    <mesh name="hip_rr" content_type="model/stl" file="hip_rr.STL"/>
+    <mesh name="thigh_rr" content_type="model/stl" file="thigh_rr.STL"/>
+    <mesh name="calf_rr" content_type="model/stl" file="calf_rr.STL"/>
+    <mesh name="hip_rl" content_type="model/stl" file="hip_rl.STL"/>
+    <mesh name="thigh_rl" content_type="model/stl" file="thigh_rl.STL"/>
+    <mesh name="calf_rl" content_type="model/stl" file="calf_rl.STL"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 3" dir="0 0 -1" directional="true" diffuse="0.8 0.8 0.8"/>
+    <geom name="floor" type="plane" size="0 0 0.05" material="grid" contype="1" conaffinity="1" friction="1 0.005 0.0001"/>
+
+    <body name="base_link" pos="0 0 0.55">
+      <freejoint name="root"/>
+      <!-- Mass 10 kg; inertia computed from the mesh (convex hull, uniform density) -->
+      <geom name="base_geom" class="collision" mesh="base_link" mass="10"/>
+      <site name="imu" pos="0 0 0" size="0.01"/>
+
+      <!-- ======================= FRONT RIGHT ======================= -->
+      <body name="hip_fr" pos="-0.1595 0.0665 0.05" quat="0.499998 0.5 0.500002 0.5">
+        <inertial pos="0.0347971 -1.68483e-05 -0.0591574" quat="0.996701 -0.000390134 -0.0811595 -0.000660043" mass="1.38" diaginertia="0.00127292 0.000914616 0.000798625"/>
+        <joint name="hip_fr" range="-0.8 0.8"/>
+        <geom class="visual" mesh="hip_fr"/>
+        <body name="Thigh_fr" pos="0.083 0 -0.0705">
+          <inertial pos="0.0135038 -0.106502 3.09969e-05" quat="0.707103 0.707111 0.000191479 -0.000195448" mass="1.38" diaginertia="0.00913368 0.00894983 0.00032902"/>
+          <joint name="hip_fr_2" range="-1.57 1.57" axis="1 0 0"/>
+          <geom class="visual" mesh="Thigh_fr"/>
+          <body name="calf_fr" pos="0 -0.213 0">
+            <inertial pos="-0.0243177 -0.0494847 -0.000474649" quat="0.703745 0.710453 0.000216245 -0.000161221" mass="1.38" diaginertia="0.00481048 0.00445722 0.000575689"/>
+            <joint name="knee_fr" range="-2.5 2.5" axis="-1 0 0"/>
+            <geom class="collision" mesh="calf_fr"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- ======================= FRONT LEFT ======================== -->
+      <body name="hip_fl" pos="-0.1595 -0.0665 0.05" quat="0.499998 0.5 0.500002 0.5">
+        <inertial pos="-0.0347971 1.68483e-05 -0.0591574" quat="0.996701 0.000390134 0.0811595 -0.000660043" mass="1.38" diaginertia="0.00127292 0.000914616 0.000798625"/>
+        <joint name="hip_fl" range="-0.8 0.8"/>
+        <geom class="visual" mesh="hip_fl"/>
+        <body name="thigh_fl" pos="-0.083 0 -0.0705">
+          <inertial pos="-0.0135038 -0.106502 -3.09969e-05" quat="0.707111 0.707103 0.000195448 -0.000191479" mass="1.38" diaginertia="0.00913368 0.00894983 0.00032902"/>
+          <joint name="hip_fl_2" range="-1.57 1.57" axis="1 0 0"/>
+          <geom class="visual" mesh="thigh_fl"/>
+          <body name="calf_fl" pos="0 -0.213 0">
+            <inertial pos="0.0243177 -0.0494847 0.000474649" quat="0.710453 0.703745 0.000161221 -0.000216245" mass="1.38" diaginertia="0.00481048 0.00445722 0.000575689"/>
+            <joint name="knee_fl" range="-2.5 2.5" axis="1 0 0"/>
+            <geom class="collision" mesh="calf_fl"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- ======================= REAR RIGHT ======================== -->
+      <body name="hip_rr" pos="0.1595 0.0665 0.05" quat="0.499998 0.5 0.500002 0.5">
+        <inertial pos="0.0347971 1.68478e-05 0.0591574" quat="0.996701 -0.000390223 0.0811595 0.000660056" mass="1.38" diaginertia="0.00127292 0.000914616 0.000798625"/>
+        <joint name="hip_rr" range="-0.8 0.8"/>
+        <geom class="visual" mesh="hip_rr"/>
+        <body name="thigh_rr" pos="0.083 0 0.0705">
+          <inertial pos="0.0135038 -0.106502 3.09969e-05" quat="0.707103 0.707111 0.000191479 -0.000195448" mass="1.38" diaginertia="0.00913368 0.00894983 0.00032902"/>
+          <joint name="hip_rr_2" range="-1.57 1.57" axis="1 0 0"/>
+          <geom class="visual" mesh="thigh_rr"/>
+          <body name="calf_rr" pos="0 -0.213 0">
+            <inertial pos="-0.0243177 -0.0494847 -0.000474649" quat="0.703745 0.710453 0.000216245 -0.000161221" mass="1.38" diaginertia="0.00481048 0.00445722 0.000575689"/>
+            <joint name="knee_rr" range="-2.5 2.5" axis="1 0 0"/>
+            <geom class="collision" mesh="calf_rr"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- ======================= REAR LEFT ========================= -->
+      <body name="hip_rl" pos="0.1595 -0.0665 0.05" quat="0.499998 0.5 0.500002 0.5">
+        <inertial pos="-0.0347971 -1.68483e-05 0.0591574" quat="0.996701 0.000390134 -0.0811595 0.000660043" mass="1.38" diaginertia="0.00127292 0.000914616 0.000798625"/>
+        <joint name="hip_rl" range="-0.8 0.8"/>
+        <geom class="visual" mesh="hip_rl"/>
+        <body name="thigh_rl" pos="-0.083 0 0.0705">
+          <inertial pos="-0.0135038 -0.106502 -3.09969e-05" quat="0.707111 0.707103 0.000195448 -0.000191479" mass="1.38" diaginertia="0.00913368 0.00894983 0.00032902"/>
+          <joint name="hip_rl_2" range="-1.57 1.57" axis="-1 0 0"/>
+          <geom class="visual" mesh="thigh_rl"/>
+          <body name="calf_rl" pos="0 -0.213 0">
+            <inertial pos="0.0243177 -0.0494847 0.000474649" quat="0.710453 0.703745 0.000161221 -0.000216245" mass="1.38" diaginertia="0.00481048 0.00445722 0.000575689"/>
+            <joint name="knee_rl" range="-2.5 2.5" axis="-1 0 0"/>
+            <geom class="collision" mesh="calf_rl"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- AK60 joint torque actuators: ctrl = torque [Nm] -->
+  <actuator>
+    <motor name="act_hip_fr" joint="hip_fr"/>
+    <motor name="act_hip_fr_2" joint="hip_fr_2"/>
+    <motor name="act_knee_fr" joint="knee_fr"/>
+    <motor name="act_hip_fl" joint="hip_fl"/>
+    <motor name="act_hip_fl_2" joint="hip_fl_2"/>
+    <motor name="act_knee_fl" joint="knee_fl"/>
+    <motor name="act_hip_rr" joint="hip_rr"/>
+    <motor name="act_hip_rr_2" joint="hip_rr_2"/>
+    <motor name="act_knee_rr" joint="knee_rr"/>
+    <motor name="act_hip_rl" joint="hip_rl"/>
+    <motor name="act_hip_rl_2" joint="hip_rl_2"/>
+    <motor name="act_knee_rl" joint="knee_rl"/>
+  </actuator>
+
+  <sensor>
+    <jointpos name="q_hip_fr" joint="hip_fr"/>
+    <jointpos name="q_hip_fr_2" joint="hip_fr_2"/>
+    <jointpos name="q_knee_fr" joint="knee_fr"/>
+    <jointpos name="q_hip_fl" joint="hip_fl"/>
+    <jointpos name="q_hip_fl_2" joint="hip_fl_2"/>
+    <jointpos name="q_knee_fl" joint="knee_fl"/>
+    <jointpos name="q_hip_rr" joint="hip_rr"/>
+    <jointpos name="q_hip_rr_2" joint="hip_rr_2"/>
+    <jointpos name="q_knee_rr" joint="knee_rr"/>
+    <jointpos name="q_hip_rl" joint="hip_rl"/>
+    <jointpos name="q_hip_rl_2" joint="hip_rl_2"/>
+    <jointpos name="q_knee_rl" joint="knee_rl"/>
+
+    <jointvel name="dq_hip_fr" joint="hip_fr"/>
+    <jointvel name="dq_hip_fr_2" joint="hip_fr_2"/>
+    <jointvel name="dq_knee_fr" joint="knee_fr"/>
+    <jointvel name="dq_hip_fl" joint="hip_fl"/>
+    <jointvel name="dq_hip_fl_2" joint="hip_fl_2"/>
+    <jointvel name="dq_knee_fl" joint="knee_fl"/>
+    <jointvel name="dq_hip_rr" joint="hip_rr"/>
+    <jointvel name="dq_hip_rr_2" joint="hip_rr_2"/>
+    <jointvel name="dq_knee_rr" joint="knee_rr"/>
+    <jointvel name="dq_hip_rl" joint="hip_rl"/>
+    <jointvel name="dq_hip_rl_2" joint="hip_rl_2"/>
+    <jointvel name="dq_knee_rl" joint="knee_rl"/>
+
+    <jointactuatorfrc name="tau_hip_fr" joint="hip_fr"/>
+    <jointactuatorfrc name="tau_hip_fr_2" joint="hip_fr_2"/>
+    <jointactuatorfrc name="tau_knee_fr" joint="knee_fr"/>
+    <jointactuatorfrc name="tau_hip_fl" joint="hip_fl"/>
+    <jointactuatorfrc name="tau_hip_fl_2" joint="hip_fl_2"/>
+    <jointactuatorfrc name="tau_knee_fl" joint="knee_fl"/>
+    <jointactuatorfrc name="tau_hip_rr" joint="hip_rr"/>
+    <jointactuatorfrc name="tau_hip_rr_2" joint="hip_rr_2"/>
+    <jointactuatorfrc name="tau_knee_rr" joint="knee_rr"/>
+    <jointactuatorfrc name="tau_hip_rl" joint="hip_rl"/>
+    <jointactuatorfrc name="tau_hip_rl_2" joint="hip_rl_2"/>
+    <jointactuatorfrc name="tau_knee_rl" joint="knee_rl"/>
+
+    <accelerometer name="imu_acc" site="imu"/>
+    <gyro name="imu_gyro" site="imu"/>
+    <framequat name="imu_quat" objtype="site" objname="imu"/>
+  </sensor>
+
+  <custom>
+    <!-- peak torque [Nm], rated torque [Nm], no-load speed [rad/s], rated speed [rad/s], total ratio -->
+    <numeric name="ak60_joint_limits" data="36.54 12.18 11.55 8.85 34.8"/>
+  </custom>
+</mujoco>

@@ -384,7 +384,9 @@ how far training has progressed.
 | ANYbotics ANYmal B | ✅ runs | no keyframe → training pose (unlimited joints) |
 | ANYbotics ANYmal C | ✅ runs | no keyframe → training pose |
 | Google Barkour v0 | ✅ runs | knee-forward legs: 6 joint axes flipped, keyframe pose |
-| Byte01 V2 (`Byte01_Quadraped/Model/V2/V2.xml`) | ✅ runs | faces +y → base rotated. Training pose |
+| Byte01 V1 (`--robot byte01_v1`) | ✅ runs | faces −x (`play.json`) → base rotated; calf meshes are the feet. Training pose |
+| Byte01 V2 (`--robot byte01_v2`) | ✅ runs | faces +y → base rotated; calf meshes are the feet. Training pose |
+| Byte01 V2 primitive (`--robot byte01_v2_primitive`) | ✅ runs | mesh-free V2; base/thighs are visual-only, so body–ground contact is not detected |
 | Random generated robot | ✅ runs | the training distribution |
 | Google Barkour vB | ❌ stops | zero pose has folded legs and there is no keyframe. Add a standing keyframe |
 | Spot with arm (`spot_arm`) | ❌ stops | arm joints → more than 12 hinge joints |
@@ -403,6 +405,8 @@ how far training has progressed.
    The printed `[INFO]` lines show what the adapter did (flipped axes, rotated
    base, chosen pose).
 3. If it faces backwards when commanded forward, add `--forward -y` (or `-x`).
+   For a robot in `quadrupeds/`, put `{"forward": "-x"}` in a `play.json`
+   next to its XML so `--robot <name>` picks it up (see `quadrupeds/byte01_v1`).
 4. If it spawns badly or its legs fold, add a standing pose to the XML:
    ```xml
    <keyframe>

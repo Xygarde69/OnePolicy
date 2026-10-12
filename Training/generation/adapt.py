@@ -40,6 +40,8 @@ from typing import Literal
 import mujoco
 import numpy as np
 
+from .bank import foot_point
+
 TRAINING_LEG_ORDER = ("FR", "FL", "RR", "RL")
 JOINT_ROLES = ("hip", "thigh", "calf")  # Go2 names for abduction, hip, knee.
 EXPECTED_AXES = (np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]),
@@ -450,7 +452,12 @@ def adapt_quadruped(xml_path: str, forward: Forward = "auto") -> AdaptedRobot:
     for site in root.iter("site"):
       if site.get("name") == label:
         rename("site", site, f"{label}_orig")
-    pos = model.geom_pos[feet[label]]
+    # At the foot centre (foot_point): a sphere's centre, or e.g. the tip of
+    # a calf mesh that ends in the foot, in the foot body's frame.
+    g = feet[label]
+    b = int(model.geom_bodyid[g])
+    point, _ = foot_point(model, data, g)
+    pos = data.xmat[b].reshape(3, 3).T @ (point - data.xpos[b])
     ET.SubElement(foot_body, "site", name=label, pos=_fmt(pos), size="0.01",
                   group="5", rgba="1 0 0 1")
   for k, (geom, body_name, shin) in enumerate(collision_els):

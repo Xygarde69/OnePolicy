@@ -3,7 +3,42 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-12  Joystick speeds x2
+2026-10-12  Byte01 robots playable by name; foot-tip fix for mesh feet
+  - Copied from ../Byte01_Quadraped/Model into quadrupeds/ (originals
+    untouched), playable with play.py --robot <id>:
+      byte01_v1            <- V1/byte01.xml (+ meshes)
+      byte01_v2            <- V2/V2.xml (+ meshes)
+      byte01_v2_primitive  <- Random/reference.xml (mesh-free V2)
+    V1/Assem1.xml not copied: no free joint (fixed-base assembly).
+  - byte01_v1.xml: a "-----" line in the header comment changed to "=====".
+    "--" is illegal inside XML comments; MuJoCo tolerates it, the adapter's
+    ElementTree parser does not.
+  - play.json next to a robot's XML gives defaults for what --forward auto
+    can't infer. V1's front legs are at -x (auto picked +x, so V1's FR leg
+    became RL), so quadrupeds/byte01_v1/play.json = {"forward": "-x"}.
+  - Robots whose only collision geoms are feet and shins (byte01_v2_primitive:
+    base and thighs are visual-only) left the non-foot contact sensor empty,
+    which mjlab rejects. play.py now drops that sensor, illegal_contact and
+    nonfoot_contact for such robots, with a warning.
+  - Bug fix, adapter/bank: when a robot's foot is its calf mesh (V1, V2), the
+    foot site and the leg length used the mesh's centre (mid-calf), so V2
+    measured 0.82x Go2's leg length (V1 0.58x) instead of ~1.08x; commands
+    and PD gains were scaled for a much smaller robot, and the spawn height
+    used the mesh's bounding sphere. New bank.foot_point: sphere -> centre
+    (unchanged), capsule/cylinder -> lower end cap, mesh -> lowest vertex,
+    else lowest bounding-box point. The adapter puts the foot site there and
+    the bank measures leg length and spawn height from it.
+    Checked: 6 generated robots give identical leg length, foot radius, spawn
+    and stand heights to before (training unaffected). Byte01 now: s_L 1.04
+    (V1), 1.08 (V2), 1.11 (primitive), all s_m 1.75.
+  - Checked: each robot builds and stands 2 s with zero actions. With the
+    latest checkpoint (2026-10-12_14-21-18/model_900, old reward set, still
+    training) and 0.5 m/s forward: V2 walks with stumbles, primitive drifts,
+    V1 falls over every ~0.8 s (fell_over, no body contact). All three weigh
+    1.75x Go2, above the training bank's p95 (1.53x); expect walking to
+    depend on the policy.
+
+2026-10-12  Joystick speeds x2 (5b18e06)
   - New --joystick-scale (default 2.0) multiplies all four joystick speeds
     (forward, backward, sideways, L1/R1 yaw), defaulted or given.
   - Why: requested; the flat play command range (1.0 / 0.5 / 0.5 m/s,

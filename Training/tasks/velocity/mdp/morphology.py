@@ -156,8 +156,9 @@ def scaled_push_by_setting_velocity(
   velocity_range: dict[str, tuple[float, float]],
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> None:
-  """mjlab's push_by_setting_velocity with the linear part (x, y, z, in Go2
-  m/s) scaled by each robot's speed scale. Angular velocities are unscaled."""
+  """mjlab's push_by_setting_velocity in Go2 units: the linear part (x, y, z)
+  scaled by each robot's speed scale, the angular part by its inverse time
+  scale."""
   asset: Entity = env.scene[asset_cfg.name]
   vel_w = asset.data.root_link_vel_w[env_ids]
   keys = ("x", "y", "z", "roll", "pitch", "yaw")
@@ -165,5 +166,7 @@ def scaled_push_by_setting_velocity(
                         device=env.device)
   push = ranges[:, 0] + (ranges[:, 1] - ranges[:, 0]) * torch.rand(
     len(env_ids), 6, device=env.device)
-  push[:, :3] *= get_morph_scales(env).speed[env_ids, None]
+  scales = get_morph_scales(env)
+  push[:, :3] *= scales.speed[env_ids, None]
+  push[:, 3:] /= scales.time[env_ids, None]
   asset.write_root_link_velocity_to_sim(vel_w + push, env_ids=env_ids)

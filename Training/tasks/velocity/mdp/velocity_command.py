@@ -80,8 +80,11 @@ class UniformVelocityCommand(CommandTerm):
     self.vel_command_b[env_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y)
     self.vel_command_b[env_ids, 2] = r.uniform_(*self.cfg.ranges.ang_vel_z)
     self.vel_command_b[env_ids, :] *= (torch.norm(self.vel_command_b[env_ids, :], dim=1) > 0.1).unsqueeze(1)
-    # Ranges are Go2's; each robot gets them scaled by its speed scale.
-    self.vel_command_b[env_ids, :2] *= get_morph_scales(self._env).speed[env_ids, None]
+    # Ranges are Go2's; each robot gets them scaled by its speed scale (linear)
+    # and inverse time scale (yaw rate).
+    scales = get_morph_scales(self._env)
+    self.vel_command_b[env_ids, :2] *= scales.speed[env_ids, None]
+    self.vel_command_b[env_ids, 2] /= scales.time[env_ids]
     if self.cfg.heading_command:
       assert self.cfg.ranges.heading is not None
       self.heading_target[env_ids] = r.uniform_(*self.cfg.ranges.heading)
@@ -107,10 +110,11 @@ class UniformVelocityCommand(CommandTerm):
     if self.cfg.heading_command:
       self.heading_error = wrap_to_pi(self.heading_target - self.robot.data.heading_w)
       env_ids = self.is_heading_env.nonzero(as_tuple=False).flatten()
+      time = get_morph_scales(self._env).time[env_ids]
       self.vel_command_b[env_ids, 2] = torch.clip(
-        self.cfg.heading_control_stiffness * self.heading_error[env_ids],
-        min=self.cfg.ranges.ang_vel_z[0],
-        max=self.cfg.ranges.ang_vel_z[1],
+        self.cfg.heading_control_stiffness / time * self.heading_error[env_ids],
+        min=self.cfg.ranges.ang_vel_z[0] / time,
+        max=self.cfg.ranges.ang_vel_z[1] / time,
       )
     standing_env_ids = self.is_standing_env.nonzero(as_tuple=False).flatten()
     self.vel_command_b[standing_env_ids, :] = 0.0
@@ -177,9 +181,10 @@ class UniformVelocityCommand(CommandTerm):
     super().compute(dt)
     if self.gamepad is not None:
       forward, yaw = self.gamepad()
-      self.vel_command_b[:, 0] = forward * get_morph_scales(self._env).speed
+      scales = get_morph_scales(self._env)
+      self.vel_command_b[:, 0] = forward * scales.speed
       self.vel_command_b[:, 1] = 0.0
-      self.vel_command_b[:, 2] = yaw
+      self.vel_command_b[:, 2] = yaw / scales.time
     if self._joystick_enabled is not None and self._joystick_enabled.value:
       assert self._joystick_get_env_idx is not None
       idx = self._joystick_get_env_idx()

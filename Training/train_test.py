@@ -106,6 +106,8 @@ def describe(env: ManagerBasedRlEnv, bank) -> list[str]:
     f"vy {twist.lin_vel_y[0] * s_v:+.2f}..{twist.lin_vel_y[1] * s_v:+.2f} m/s   "
     f"track std {rew['track_linear_velocity'].params['std'] * s_v:.2f} m/s   "
     f"moving above {0.1 * s_v:.2f} m/s",
+    f"yaw       {twist.ang_vel_z[0] / s_t:+.2f}..{twist.ang_vel_z[1] / s_t:+.2f} rad/s   "
+    f"track std {rew['track_angular_velocity'].params['std'] / s_t:.2f} rad/s",
     f"gait      period {rew['foot_gait'].params['period'] * s_t:.2f} s   "
     f"foot clearance {r_foot + (clearance - NOMINAL_FOOT_RADIUS) * s_L:.3f} m",
     f"random    push xy +-{push['x'][1] * s_v:.2f} m/s   "

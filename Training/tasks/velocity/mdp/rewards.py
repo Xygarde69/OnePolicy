@@ -54,7 +54,8 @@ def track_angular_velocity(
 ) -> torch.Tensor:
   """Reward heading error for heading-controlled envs, angular velocity for others.
 
-  The commanded xy angular velocities are assumed to be zero.
+  The commanded xy angular velocities are assumed to be zero. `std` is Go2's
+  [rad/s], divided by each robot's time scale (angular rates ~ 1/sqrt(s_L)).
   """
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
@@ -63,6 +64,7 @@ def track_angular_velocity(
   z_error = torch.square(command[:, 2] - actual[:, 2])
   xy_error = torch.sum(torch.square(actual[:, :2]), dim=1)
   ang_vel_error = z_error + (0.05 * xy_error)
+  std = std / get_morph_scales(env).time
   return torch.exp(-ang_vel_error / std**2)
 
 
@@ -116,12 +118,16 @@ def body_angular_velocity_penalty(
   env: ManagerBasedRlEnv,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Penalize excessive body angular velocities."""
+  """Penalize excessive body angular velocities.
+
+  Angular rates scale with 1/sqrt(s_L), so the squared rate is multiplied by
+  s_L (Go2 units).
+  """
   asset: Entity = env.scene[asset_cfg.name]
   ang_vel = asset.data.body_link_ang_vel_w[:, asset_cfg.body_ids, :]
   ang_vel = ang_vel.squeeze(1)
   ang_vel_xy = ang_vel[:, :2]  # Don't penalize z-angular velocity.
-  return torch.sum(torch.square(ang_vel_xy), dim=1)
+  return torch.sum(torch.square(ang_vel_xy), dim=1) * get_morph_scales(env).length
 
 
 def angular_momentum_penalty(
@@ -183,7 +189,8 @@ def feet_clearance(
   """Penalize deviation from target clearance height, weighted by foot velocity.
 
   `target_height` is Go2's foot-centre height [m]: its lift above Go2's foot
-  radius is scaled by s_L and the robot's own foot radius added back.
+  radius is scaled by s_L and the robot's own foot radius added back. Height
+  error ~ s_L times foot speed ~ s_L^0.5, so the cost is divided by s_L^1.5.
   """
   asset: Entity = env.scene[asset_cfg.name]
   scales = get_morph_scales(env)
@@ -192,7 +199,7 @@ def feet_clearance(
   foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]  # [B, N, 2]
   vel_norm = torch.norm(foot_vel_xy, dim=-1)  # [B, N]
   delta = torch.abs(foot_z - target[:, None])  # [B, N]
-  cost = torch.sum(delta * vel_norm, dim=1)  # [B]
+  cost = torch.sum(delta * vel_norm, dim=1) / scales.length**1.5  # [B]
   if command_name is not None:
     command = env.command_manager.get_command(command_name)
     if command is not None:
@@ -454,6 +461,20 @@ def scaled_joint_vel_l2(
   asset: Entity = env.scene[asset_cfg.name]
   vel_sq = torch.sum(torch.square(asset.data.joint_vel[:, asset_cfg.joint_ids]), dim=1)
   return vel_sq * get_morph_scales(env).length
+
+
+def scaled_joint_acc_l2(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize joint accelerations, in Go2 units.
+
+  Joint acceleration scales with 1 / time scale^2 = 1/s_L, so its square is
+  multiplied by s_L^2.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  acc_sq = torch.sum(torch.square(asset.data.joint_acc[:, asset_cfg.joint_ids]), dim=1)
+  return acc_sq * get_morph_scales(env).length ** 2
 
 
 class variable_posture:

@@ -3,7 +3,8 @@
 The task's thresholds are Go2's. Each generated robot gets them rescaled by
 dynamic similarity (Froude scaling) to its own anatomy, with
   s_L = leg length / Go2 leg length,   s_m = mass / Go2 mass,
-  speed ~ sqrt(s_L),  time ~ sqrt(s_L),  force ~ s_m,  torque ~ s_m * s_L.
+  speed ~ sqrt(s_L),  time ~ sqrt(s_L),  angular rate ~ 1/sqrt(s_L),
+  force ~ s_m,  torque ~ s_m * s_L.
 A robot that is Go2's size gets exactly Go2's values. Angles and ratios
 (orientation limits, joint pose stds, gait duty factor, ...) need no scaling.
 
@@ -64,9 +65,11 @@ def get_morph_scales(env: ManagerBasedRlEnv) -> MorphScales:
 
 
 def normalized_command(env: ManagerBasedRlEnv, command: torch.Tensor) -> torch.Tensor:
-  """Velocity command in Go2 units: linear part divided by the speed scale.
+  """Velocity command in Go2 units: linear part divided by the speed scale,
+  yaw rate multiplied by the time scale.
 
   Compare this, not the raw command, against Go2-tuned speed thresholds.
   """
-  speed = get_morph_scales(env).speed
-  return torch.cat([command[:, :2] / speed[:, None], command[:, 2:]], dim=1)
+  scales = get_morph_scales(env)
+  return torch.cat([command[:, :2] / scales.speed[:, None],
+                    command[:, 2:] * scales.time[:, None]], dim=1)

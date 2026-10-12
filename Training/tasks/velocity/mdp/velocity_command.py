@@ -45,6 +45,15 @@ class UniformVelocityCommand(CommandTerm):
     )
     self.is_standing_env = torch.zeros_like(self.is_heading_env)
 
+    # Per-robot command level in [0, 1]: sampled commands are multiplied by it.
+    # Raised or lowered at each reset by the command_levels curriculum from
+    # the episode's tracking error, read from the accumulators below.
+    self.command_level = torch.full(
+      (self.num_envs,), cfg.initial_level, device=self.device)
+    self.episode_error_sum = torch.zeros(self.num_envs, device=self.device)
+    """Sum over the episode of the xy velocity error in Go2 units [m/s]."""
+    self.episode_steps = torch.zeros(self.num_envs, device=self.device)
+
     self.metrics["error_vel_xy"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["error_vel_yaw"] = torch.zeros(self.num_envs, device=self.device)
 
@@ -60,7 +69,17 @@ class UniformVelocityCommand(CommandTerm):
   def command(self) -> torch.Tensor:
     return self.vel_command_b
 
+  def reset(self, env_ids: torch.Tensor | slice | None) -> dict[str, float]:
+    extras = super().reset(env_ids)
+    self.episode_error_sum[env_ids] = 0.0
+    self.episode_steps[env_ids] = 0.0
+    return extras
+
   def _update_metrics(self) -> None:
+    xy_error = torch.norm(
+      self.vel_command_b[:, :2] - self.robot.data.root_link_lin_vel_b[:, :2], dim=-1)
+    self.episode_error_sum += xy_error / get_morph_scales(self._env).speed
+    self.episode_steps += 1
     max_command_time = self.cfg.resampling_time_range[1]
     max_command_step = max_command_time / self._env.step_dt
     self.metrics["error_vel_xy"] += (
@@ -79,6 +98,7 @@ class UniformVelocityCommand(CommandTerm):
     self.vel_command_b[env_ids, 0] = r.uniform_(*self.cfg.ranges.lin_vel_x)
     self.vel_command_b[env_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y)
     self.vel_command_b[env_ids, 2] = r.uniform_(*self.cfg.ranges.ang_vel_z)
+    self.vel_command_b[env_ids, :] *= self.command_level[env_ids, None]
     self.vel_command_b[env_ids, :] *= (torch.norm(self.vel_command_b[env_ids, :], dim=1) > 0.1).unsqueeze(1)
     # Ranges are Go2's; each robot gets them scaled by its speed scale (linear)
     # and inverse time scale (yaw rate).
@@ -110,11 +130,13 @@ class UniformVelocityCommand(CommandTerm):
     if self.cfg.heading_command:
       self.heading_error = wrap_to_pi(self.heading_target - self.robot.data.heading_w)
       env_ids = self.is_heading_env.nonzero(as_tuple=False).flatten()
+      # Yaw-rate limit: Go2's range, per robot and per command level.
+      limit = self.command_level[env_ids] / get_morph_scales(self._env).time[env_ids]
       time = get_morph_scales(self._env).time[env_ids]
       self.vel_command_b[env_ids, 2] = torch.clip(
         self.cfg.heading_control_stiffness / time * self.heading_error[env_ids],
-        min=self.cfg.ranges.ang_vel_z[0] / time,
-        max=self.cfg.ranges.ang_vel_z[1] / time,
+        min=self.cfg.ranges.ang_vel_z[0] * limit,
+        max=self.cfg.ranges.ang_vel_z[1] * limit,
       )
     standing_env_ids = self.is_standing_env.nonzero(as_tuple=False).flatten()
     self.vel_command_b[standing_env_ids, :] = 0.0
@@ -271,6 +293,9 @@ class UniformVelocityCommandCfg(CommandTermCfg):
   rel_standing_envs: float = 0.0
   rel_heading_envs: float = 1.0
   init_velocity_prob: float = 0.0
+  initial_level: float = 1.0
+  """Starting per-robot command level (see UniformVelocityCommand.command_level).
+  Stays here unless a command_levels curriculum term moves it."""
 
   @dataclass
   class Ranges:

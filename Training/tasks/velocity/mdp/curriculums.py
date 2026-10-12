@@ -95,6 +95,38 @@ def commands_vel(
   }
 
 
+def command_levels(
+  env: ManagerBasedRlEnv,
+  env_ids: torch.Tensor,
+  command_name: str,
+  up_error: float = 0.25,
+  down_error: float = 0.5,
+  step: float = 0.1,
+  min_level: float = 0.2,
+  min_episode_s: float = 1.0,
+) -> torch.Tensor:
+  """Per-robot command curriculum, applied as each episode ends.
+
+  A robot whose mean xy tracking error over the episode (Go2 units [m/s]) was
+  below `up_error` and that did not fall gets its command level raised by
+  `step`; one above `down_error`, or that fell, gets it lowered, within
+  [min_level, 1]. Episodes shorter than `min_episode_s` are skipped. Unlike
+  the global velocity stages, every robot advances at its own pace.
+  """
+  command_term = env.command_manager.get_term(command_name)
+  assert command_term is not None
+  steps = command_term.episode_steps[env_ids]
+  valid = steps * env.step_dt >= min_episode_s
+  error = command_term.episode_error_sum[env_ids] / torch.clamp(steps, min=1)
+  fell = env.termination_manager.terminated[env_ids]
+  up = valid & (error < up_error) & ~fell
+  down = valid & ((error > down_error) | fell)
+  level = command_term.command_level
+  level[env_ids] = torch.clamp(
+    level[env_ids] + step * (up.float() - down.float()), min_level, 1.0)
+  return torch.mean(level)
+
+
 def reward_weight(
   env: ManagerBasedRlEnv,
   env_ids: torch.Tensor,

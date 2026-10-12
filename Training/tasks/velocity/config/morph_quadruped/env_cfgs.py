@@ -152,6 +152,10 @@ def morph_quadruped_rough_env_cfg(
     cfg.episode_length_s = int(1e9)
 
     cfg.observations["actor"].enable_corruption = False
+    # No curriculum in play, so commands use their full range.
+    twist_cmd = cfg.commands["twist"]
+    assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+    twist_cmd.initial_level = 1.0
     cfg.events.pop("push_robot", None)
     cfg.curriculum = {}
     cfg.events["randomize_terrain"] = EventTermCfg(

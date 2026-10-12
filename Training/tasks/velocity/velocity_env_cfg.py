@@ -168,6 +168,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       rel_standing_envs=0.05,
       heading_command=True,
       heading_control_stiffness=0.5,
+      initial_level=0.5,  # Raised per robot by the command_levels curriculum.
       debug_vis=True,
       ranges=UniformVelocityCommandCfg.Ranges(
         lin_vel_x=(-1.0, 2.0),
@@ -442,6 +443,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
           {"step": 5000 * 24, "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.0, 1.0)},
         ],
       },
+    ),
+    "command_levels": CurriculumTermCfg(
+      func=mdp.command_levels,
+      params={"command_name": "twist"},
     ),
     # Raise tracking with the command range so the effort penalties don't make
     # the robot give up on fast commands (arXiv 2312.17507, Sec. II-E.3).

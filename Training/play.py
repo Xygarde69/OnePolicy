@@ -16,6 +16,8 @@ convention). --random generates a robot exactly as train.py does.
 
 Without --policy, the latest checkpoint of the latest training run is used.
 --agent zero / random plays without a policy (to check the robot).
+--joystick True drives the robot with a DualSense's right stick (up/down:
+forward/back, left/right: turn); see gamepad.py.
 """
 
 import os
@@ -43,6 +45,7 @@ from mjlab.utils.wrappers import VideoRecorder  # noqa: E402
 from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer  # noqa: E402
 
 from assets.morph_quadruped.constants import INIT_JOINT_POS  # noqa: E402
+from gamepad import DualSenseRightStick  # noqa: E402
 from generation.adapt import adapt_quadruped, fit_pose  # noqa: E402
 from generation.bank import (  # noqa: E402
   MorphologyGenCfg,
@@ -96,6 +99,16 @@ class PlayConfig:
   viewer: Literal["auto", "native", "viser"] = "auto"
   no_terminations: bool = False
   """Disable all termination conditions."""
+  joystick: bool = False
+  """Drive with a DualSense right stick: up/down = forward/back, left/right = turn."""
+  joystick_device: str = "/dev/input/js0"
+  joystick_max_forward: float | None = None
+  """Full-stick forward speed [Go2 m/s, scaled to the robot]. None: the task's
+  command range."""
+  joystick_max_backward: float | None = None
+  """Full-stick backward speed [Go2 m/s]. None: the task's command range."""
+  joystick_max_yaw: float | None = None
+  """Full-stick yaw rate [rad/s]. None: the task's command range."""
 
 
 def resolve_pose(pattern_pose: dict[str, float], names) -> dict[str, float]:
@@ -186,6 +199,28 @@ def prepare_robot(cfg: PlayConfig, robot_dir: Path) -> tuple[dict[str, float] | 
   return pose, xml_path.stem
 
 
+def attach_gamepad(env: ManagerBasedRlEnv, cfg: PlayConfig) -> None:
+  """Let the DualSense right stick set the velocity command."""
+  term = env.command_manager.get_term("twist")
+  ranges = term.cfg.ranges
+  def pick(value: float | None, default: float) -> float:
+    return default if value is None else value
+
+  max_forward = pick(cfg.joystick_max_forward, ranges.lin_vel_x[1])
+  max_backward = pick(cfg.joystick_max_backward, -ranges.lin_vel_x[0])
+  max_yaw = pick(cfg.joystick_max_yaw, ranges.ang_vel_z[1])
+  stick = DualSenseRightStick(cfg.joystick_device)
+
+  def command() -> tuple[float, float]:
+    forward, turn = stick.read()
+    return forward * (max_forward if forward > 0 else max_backward), turn * max_yaw
+
+  term.gamepad = command
+  print(f"[INFO]: Joystick {cfg.joystick_device}: right stick up/down = forward "
+        f"{max_forward:.2f} / back {max_backward:.2f} m/s (Go2 units), "
+        f"left/right = turn {max_yaw:.2f} rad/s")
+
+
 def run_play(cfg: PlayConfig):
   # The robot is deleted when play ends, however it ends.
   robot_dir = Path(tempfile.mkdtemp(prefix="play_robot_"))
@@ -241,6 +276,9 @@ def _play(cfg: PlayConfig, robot_dir: Path):
       "[WARN] Video recording with dummy agents is disabled (no checkpoint/log_dir)."
     )
   env = ManagerBasedRlEnv(cfg=env_cfg, device=device, render_mode=render_mode)
+
+  if cfg.joystick:
+    attach_gamepad(env, cfg)
 
   if TRAINED_MODE and cfg.video:
     print("[INFO] Recording videos during play")

@@ -52,6 +52,9 @@ class UniformVelocityCommand(CommandTerm):
     self._joystick_enabled: viser.GuiCheckboxHandle | None = None
     self._joystick_sliders: list[viser.GuiSliderHandle] = []
     self._joystick_get_env_idx: Callable[[], int] | None = None
+    # Set by play.py --joystick: returns (forward, yaw rate) in Go2 units
+    # ([m/s], [rad/s]); overrides every env's command each step.
+    self.gamepad: Callable[[], tuple[float, float]] | None = None
 
   @property
   def command(self) -> torch.Tensor:
@@ -172,6 +175,11 @@ class UniformVelocityCommand(CommandTerm):
 
   def compute(self, dt: float) -> None:
     super().compute(dt)
+    if self.gamepad is not None:
+      forward, yaw = self.gamepad()
+      self.vel_command_b[:, 0] = forward * get_morph_scales(self._env).speed
+      self.vel_command_b[:, 1] = 0.0
+      self.vel_command_b[:, 2] = yaw
     if self._joystick_enabled is not None and self._joystick_enabled.value:
       assert self._joystick_get_env_idx is not None
       idx = self._joystick_get_env_idx()

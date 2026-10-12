@@ -3,6 +3,115 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
+2026-10-12  Morphology-general rewards and training (d9b9c70, fd3589f,
+            5bd09c9, 5b6fd25, c06aaef, 60c7f8b)
+  Why: the policy must work on any quadruped of this shape. Measured on 200
+  generated robots (seed 1, p5-p95): leg length 0.57-1.61x Go2's, mass
+  0.40-1.53x, torque scale (s_m * s_L) 0.27-2.06x. A term not expressed in
+  Go2 units or as a ratio to the robot's own size/limits pulls several times
+  harder on some bodies than others, so the policy over-fits whichever
+  bodies dominate the loss. Every change below makes a term mean the same on
+  every robot, or lets each robot learn at its own pace.
+
+  1. Size-corrected existing terms (d9b9c70)
+     - joint_acc_l2 -> scaled_joint_acc_l2, x s_L^2. Joint acceleration
+       ~ 1/s_L, so the raw penalty was ~8x apart across the bank.
+     - body_ang_vel x s_L (angular rate^2 ~ 1/s_L).
+     - foot_clearance / s_L^1.5 (height error ~ s_L times foot speed
+       ~ s_L^0.5); only its target was scaled before.
+     - Yaw everywhere: command range, heading-control stiffness and clip,
+       track_angular_velocity std, angular pushes and the joystick now use
+       angular rate ~ 1/sqrt(s_L). Before, big robots were asked to turn
+       relatively harder than small ones. normalized_command also returns yaw
+       in Go2 units, so all command-gated terms compare like with like.
+     Checked: train_test.py runs; it now also prints each robot's yaw range.
+
+  2. base_height, -5.0 (fd3589f)
+     The bank now stores each robot's base height above its feet in the
+     default pose (base_above_feet). Penalty = squared fractional error of the
+     base above the mean of the feet in contact; zero in flight.
+     Why: the pose term alone allows crouched / kneeling gaits on some bodies
+     (train_test.py notes robots sagging onto their calves). Measured against
+     the feet, not the floor, so it holds on rough terrain; a fraction, so it
+     means the same for every size.
+     Checked: zero-action robots that sag get ~-0.16 per step.
+
+  3. mechanical_power, -0.5 (5bd09c9)
+     sum max(tau * qdot, 0) / (m g sqrt(g L)).
+     Why: torque^2 needs per-size tuning; Froude power is dimensionless, so
+     one weight fits every robot and it rewards efficient gaits. Not cost of
+     transport (divides by speed, blows up when standing).
+     Bug avoided: actuator_force is in actuator order (hips, thighs, calves),
+     not joint order; _joint_order_torques reorders before multiplying by
+     joint speed. Checked by printing actuator target_ids vs ctrl ids.
+
+  4. actuator_headroom, -1.0 (5bd09c9)
+     Squared excess of requested PD torque over 80% of the torque the motor
+     can give at its current speed (its DC torque-speed band), and of joint
+     speed over 90% of its limit.
+     Why: each robot has different limits, so only a ratio works for all.
+     Saturation is where behaviour transfers worst to unseen bodies; the
+     requested (pre-clip) torque keeps commands beyond the band visible
+     (KAIST Hound Sec. III-D).
+     Checked: forced joint-target offsets of 0 / 0.3 / 0.8 / 1.5 rad give
+     0 / 0 / 0 / 2.96; random actions stay at 0 (about 20% of the band).
+
+  5. nonfoot_contact, -1.0 (5b6fd25)
+     Non-foot ground force / illegal_contact threshold (10 N Go2, x s_m),
+     capped at 1 per geom.
+     Why: illegal_contact only terminates, one sudden punishment. A graded
+     penalty below the threshold helps long-legged and low-slung bodies
+     learn to keep knees and thighs off the ground.
+
+  6. stance_width, -10.0 (5b6fd25)
+     In the base frame, each foot should stay at least half its hip's
+     lateral offset out from the midline; the shortfall / leg length,
+     squared. Hip and foot lists use preserve_order so legs pair up.
+     Why: hip width varies across generated robots; narrow ones tend to
+     cross or tangle their legs.
+
+  7. feet_air_time +0.5 (0.3 s Go2, time-scaled); foot_gait tapered
+     0.5 -> 0.25 at step 5000*24 (5b6fd25)
+     Why: foot_gait imposes one fixed clock period; free-cadence air time
+     lets each body settle on its own stepping rhythm.
+     Checked (5-7): all run on flat and rough terrain.
+
+  8. Reward per robot size (c06aaef, window fixed in 60c7f8b)
+     Episode returns split into leg-length thirds, logged as
+     Morphology/mean_reward_{small,medium,large} and drawn by --plot (CSV gets
+     three more columns).
+     Why: shows if the policy fits one body size at the others' expense.
+     Fix: each third first kept its own last 100 episodes, so they reached
+     further back than rsl_rl's overall mean (the overall line fell below all
+     three). Now one shared last-100 window; overall sits between the thirds.
+
+  9. Per-robot command curriculum, command_levels (c06aaef)
+     Each robot's sampled commands (and heading yaw limit) are multiplied by
+     its own level in [0.2, 1], 0.5 at start (1.0 in play). At each episode
+     end: +0.1 if mean xy tracking error < 0.25 m/s (Go2 units) and no fall,
+     -0.1 if > 0.5 m/s or it fell; episodes under 1 s are skipped.
+     Why: the global velocity stages move every robot at once, so small or
+     awkward bodies get commands they can't follow and stop learning.
+     Checked: a robot tracking well for 2 s rose 0.5 -> 0.6; one that fell
+     dropped to 0.4.
+
+  10. Left-right mirror symmetry, train.py --symmetry (default True) (60c7f8b)
+     tasks/velocity/rl/symmetry.py mirrors every observation term and the
+     actions (FR<->FL, RR<->RL, abduction joints and lateral axes negated,
+     trot clock shifted half a period, height-scan rows reversed); rsl_rl
+     trains on both copies. Unknown observation terms raise a KeyError.
+     Why: the generated robots are left-right symmetric, so mirrored samples
+     are valid; doubles data and gives a symmetric gait, usually stronger
+     than any symmetry reward.
+     Checked: mirror applied twice is exact (actor, critic, actions); the
+     residual self-mirror difference in the default pose matches observation
+     noise.
+
+  End-to-end check: 64 robots, 12-15 iterations with --plot: all terms
+  log, symmetry loss ~0.002, command level and per-size curves update. Too
+  short to judge learning; next step is a full run compared against
+  2026-10-12_14-21-18 (started on the 68e8a31 reward set, before this batch).
+
 2026-10-12  Remove reward-gated command boost; add train.py --plot (18be264)
   - Removed the yaw / x-y command boost from tasks/velocity/rl/runner.py
     (and the ang_vel_z_scale / lin_vel_scale fields it set on the command

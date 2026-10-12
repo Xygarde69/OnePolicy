@@ -190,7 +190,8 @@ $PY train.py --help                              # all --env.* / --agent.* optio
 | `--agent.max-iterations` | `10001` | PPO iterations |
 | `--agent.logger` | `tensorboard` | `tensorboard` or `wandb` |
 | `--video` | `False` | Record training videos |
-| `--plot` | `False` | Plot mean episode reward per iteration to `<log_dir>/mean_reward.png` (+ `.csv`) |
+| `--plot` | `False` | Plot mean episode reward per iteration, overall and per leg-length third, to `<log_dir>/mean_reward.png` (+ `.csv`) |
+| `--symmetry` | `True` | Left-right mirror data augmentation in PPO |
 | `--gpu-ids` | `[0]` | GPUs to use (several → torchrunx) |
 
 ### Output

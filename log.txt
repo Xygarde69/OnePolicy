@@ -3,7 +3,45 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-12  Fix play.py --random crash ("Error opening file 'hip.obj'")
+2026-10-12  train.py --generalise: train on proxies of real robots too
+  - --generalise: of num_envs, round(2/3) get generated robots and the rest
+    is split equally between Spot, A1, Barkour v0 and Go2 (first robots take
+    the remainder; 4096 -> 2731 generated, 342/341/341/341).
+  - Why proxies: mjwarp simulates every env against ONE model structure
+    (same bodies, joints, geoms, geom types); only numbers vary per env. Real
+    MJCFs have their own structure, so they can't share a batch. A proxy
+    (generation/proxy.py) is the generated robot's structure filled with the
+    real robot's numbers, measured in its zero pose after adapt.py: hip,
+    thigh, knee anchors and foot centre; per-link mass, COM and inertia
+    (real bodies lumped by which joint moves them); base box from the real
+    base's collision geoms; foot sphere of the real radius (min 15 mm for
+    mesh feet).
+    Approximations forced by the shared structure: joint axes stay x/y/y
+    (checked, none of the 4 deviates > 5 deg), inertia loses off-diagonal
+    terms, base box centred on the base origin, generated visual geoms.
+    Checked: proxies match mass (Spot 50.35 vs 50.34 kg, Go2 15.21, A1
+    12.46 vs 12.45, Barkour 11.49), leg length and foot radius exactly, and
+    pass the bank's structure check.
+  - Per-env joint ranges and default pose (bank jnt_range, default_joint_pos):
+    Barkour's knees bend forward (range 0..2.51 rad, keyframe thigh -0.5 /
+    calf +1.0); with the shared generated range and training pose its feet
+    ended up above the body. jnt_range is a per-env mjwarp field and
+    default_joint_pos a per-env tensor, so apply_morphologies now writes
+    both, plus the soft limits and the joint-position action's offset (which
+    mjlab copies at env creation, before startup events). Proxies use the
+    real keyframe pose, matching what play.py uses for the real robot.
+    Generated robots: template ranges and the training pose, as before.
+  - generation/catalog.py: robot lookup, play.json defaults and default-pose
+    choice moved out of play.py, shared by play and the proxies.
+  - Reward per robot type: when a bank mixes types, the runner groups
+    episode returns by type (Morphology/mean_reward_generated, _spot, ...;
+    also in --plot and the CSV) instead of leg-length thirds.
+  - Checked: mixed env applies each env's pose/offset/range (Barkour 0..2.51);
+    early zero-action resets are the usual illegal_contact sag, spawn heights
+    correct; 64-env, 10-iteration --generalise --plot run completes with
+    per-type curves; play (go2, real barkour_v0) and train_test.py still run.
+
+2026-10-12  Fix play.py --random crash ("Error opening file 'hip.obj'") (2790768)
   - drop_body_contact_if_unmatched (added in c816bf3) compiled the robot XML
     with MjModel.from_xml_path, which can't find generated robots' hip.obj:
     training supplies that mesh from memory (mesh_assets), it isn't written

@@ -23,7 +23,7 @@ _ACTUATOR_FIELDS = ("actuator_ctrlrange", "actuator_forcerange", "dof_armature")
 
 
 @requires_model_fields(
-  *MORPHOLOGY_FIELDS, *_ACTUATOR_FIELDS, recompute=RecomputeLevel.set_const
+  *MORPHOLOGY_FIELDS, *_ACTUATOR_FIELDS, "jnt_range", recompute=RecomputeLevel.set_const
 )
 def apply_morphologies(
   env: ManagerBasedRlEnv,
@@ -96,6 +96,16 @@ def apply_morphologies(
   asset.data.default_root_state[env_ids, 2] = torch.as_tensor(
     bank["root_height"][bank_ids], dtype=torch.float, device=env.device)
 
+  # Each robot's own joint limits and default pose (proxies of real robots
+  # differ, e.g. knee-forward legs; see generation/proxy.py).
+  if "jnt_range" in bank:
+    _apply_joint_data(env, asset, env_ids, bank["joint_names"],
+                      per_env("jnt_range"), per_env("default_joint_pos"), prefix)
+  sources = bank["sources"] if "sources" in bank else np.array(["generated"] * len(bank["seeds"]))
+  if not hasattr(env, "morph_sources"):
+    env.morph_sources = np.array(["generated"] * env.num_envs, dtype=object)
+  env.morph_sources[env_ids.cpu().numpy()] = sources[bank_ids]
+
   max_vel = per_env("max_joint_velocity")[:, None]
   s_m = scales.mass[env_ids, None]
   s_L = scales.length[env_ids, None]
@@ -125,6 +135,35 @@ def apply_morphologies(
     dof_ids = asset.indexing.joint_v_adr[act.target_ids].long()
     default = env.sim.get_default_field("dof_armature")[dof_ids]
     env.sim.model.dof_armature[rows, dof_ids] = default * inertia
+
+
+def _apply_joint_data(env, asset: Entity, env_ids: torch.Tensor, joint_names,
+                      ranges: torch.Tensor, default_pos: torch.Tensor,
+                      prefix: str) -> None:
+  """Write per-env joint limits and default pose, and everything derived from
+  them at env creation (soft limits, the joint-position action's offset)."""
+  mj_model = env.sim.mj_model
+  global_ids = torch.tensor([mj_model.joint(prefix + str(n)).id for n in joint_names],
+                            device=env.device)
+  rows = env_ids[:, None]
+  env.sim.model.jnt_range[rows, global_ids] = ranges.to(env.sim.model.jnt_range.dtype)
+
+  local = torch.tensor([list(asset.joint_names).index(str(n)) for n in joint_names],
+                       device=env.device)
+  data = asset.data
+  data.default_joint_pos[rows, local] = default_pos
+  data.default_joint_pos_limits[rows, local] = ranges
+  data.joint_pos_limits[rows, local] = ranges
+  factor = asset.cfg.articulation.soft_joint_pos_limit_factor if asset.cfg.articulation else 1.0
+  mean = ranges.mean(dim=-1)
+  half = 0.5 * (ranges[..., 1] - ranges[..., 0]) * factor
+  data.soft_joint_pos_limits[rows, local] = torch.stack([mean - half, mean + half], dim=-1)
+
+  # JointPositionAction copies the default pose when it is built (before this
+  # startup event), so refresh its offset.
+  for term in env.action_manager._terms.values():
+    if getattr(term.cfg, "use_default_offset", False) and hasattr(term, "_offset"):
+      term._offset[env_ids] = data.default_joint_pos[env_ids][:, term._target_ids]
 
 
 @requires_model_fields("body_ipos", recompute=RecomputeLevel.set_const)

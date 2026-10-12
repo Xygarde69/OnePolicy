@@ -20,7 +20,6 @@ Without --policy, the latest checkpoint of the latest training run is used.
 forward/back, left/right = sideways; L1 turns left, R1 turns right (gamepad.py).
 """
 
-import json
 import os
 import re
 import secrets
@@ -47,7 +46,13 @@ from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer  # noqa: E402
 
 from assets.morph_quadruped.constants import INIT_JOINT_POS, get_spec  # noqa: E402
 from gamepad import DualSenseGamepad  # noqa: E402
-from generation.adapt import adapt_quadruped, fit_pose  # noqa: E402
+from generation.adapt import adapt_quadruped  # noqa: E402
+from generation.catalog import (  # noqa: E402
+  QUADRUPEDS_DIR,
+  default_pose,
+  find_robot,
+  robot_defaults,
+)
 from generation.bank import (  # noqa: E402
   MorphologyGenCfg,
   generate_bank,
@@ -64,7 +69,6 @@ from tasks.velocity.rl import VelocityOnPolicyRunner  # noqa: E402
 # Placeholder: path to the robot MJCF to play (overridden by --robot-xml).
 ROBOT_XML = "path/to/your_quadruped.xml"
 
-QUADRUPEDS_DIR = Path(__file__).resolve().parent.parent / "quadrupeds"
 
 
 @dataclass(frozen=True)
@@ -122,55 +126,6 @@ class PlayConfig:
   yaw), whether defaulted or given."""
 
 
-def resolve_pose(pattern_pose: dict[str, float], names) -> dict[str, float]:
-  """Expand a {regex: value} pose to {joint name: value}."""
-  return {
-    n: next(v for p, v in pattern_pose.items() if re.fullmatch(p, n)) for n in names
-  }
-
-
-def available_robots(quadrupeds_dir: Path) -> dict[str, Path]:
-  """Robot name (file stem) -> robot MJCF, skipping scenes and MJX variants."""
-  return {
-    p.stem: p
-    for p in sorted(quadrupeds_dir.glob("*/*.xml"))
-    if not p.stem.startswith("scene") and not p.stem.endswith("_mjx")
-  }
-
-
-def find_robot(name: str, quadrupeds_dir: Path) -> Path:
-  """Resolve a robot name: exact file stem, else a unique partial match."""
-  robots = available_robots(quadrupeds_dir)
-  listing = ", ".join(robots) or f"none found in {quadrupeds_dir}"
-  if name == "?":
-    raise SystemExit(f"Available robots: {listing}")
-  key = name.lower()
-  if key in robots:
-    return robots[key]
-  matches = [n for n in robots if key in n or key in robots[n].parent.name.lower()]
-  if len(matches) == 1:
-    return robots[matches[0]]
-  if matches:
-    raise ValueError(f"'{name}' matches several robots: {', '.join(matches)}.")
-  raise ValueError(f"Unknown robot '{name}'. Available robots: {listing}")
-
-
-def robot_defaults(xml_path: Path) -> dict:
-  """Optional play.json next to a robot's MJCF, for what 'auto' can't infer.
-
-  Keys: "forward" (+x/-x/+y/-y), used when --forward is auto. E.g. a robot
-  whose front legs sit at -x: {"forward": "-x"}.
-  """
-  path = xml_path.parent / "play.json"
-  if not path.is_file():
-    return {}
-  defaults = json.loads(path.read_text())
-  unknown = set(defaults) - {"forward"}
-  if unknown:
-    raise ValueError(f"{path}: unknown keys {sorted(unknown)}")
-  return defaults
-
-
 def prepare_robot(cfg: PlayConfig, robot_dir: Path) -> tuple[dict[str, float] | None, str]:
   """Build the one-robot bank to play in robot_dir. Returns (default pose, label)."""
   sources = [cfg.random, cfg.robot is not None, cfg.robot_xml != ROBOT_XML]
@@ -203,29 +158,9 @@ def prepare_robot(cfg: PlayConfig, robot_dir: Path) -> tuple[dict[str, float] | 
   robot = adapt_quadruped(str(xml_path), forward)
   for line in robot.report:
     print(f"[INFO]: {line}")
-  use_keyframe = cfg.init_pose == "keyframe" or (
-    cfg.init_pose == "auto" and robot.keyframe_joint_pos is not None
-  )
-  if use_keyframe:
-    if robot.keyframe_joint_pos is None:
-      raise ValueError(f"{xml_path} has no keyframe; use --init-pose train.")
-    pose = robot.keyframe_joint_pos
-    print("[INFO]: Default pose: the robot's keyframe")
-  else:
-    if not robot.zero_pose_straight:
-      message = (
-        f"{xml_path}: zero joint angles do not put the legs straight down, "
-        "so the training pose does not transfer. Add a standing pose to the "
-        "XML (<keyframe><key name=\"home\" qpos=\"...\"/></keyframe>)."
-      )
-      if cfg.init_pose == "auto":
-        raise ValueError(message)
-      print(f"[WARN]: {message}")
-    pose, notes = fit_pose(resolve_pose(INIT_JOINT_POS, robot.joint_ranges),
-                           robot.joint_ranges)
-    print("[INFO]: Default pose: training pose")
-    for line in notes:
-      print(f"[INFO]:   {line}")
+  pose, log = default_pose(robot, xml_path, cfg.init_pose, INIT_JOINT_POS)
+  for line in log:
+    print(f"[WARN]: {line[5:]}" if line.startswith("WARN ") else f"[INFO]: {line}")
 
   single_robot_bank(robot.xml, robot.assets, robot_dir, pose)
   print(f"[INFO]: Adapted robot written to {robot_dir / 'env_00000.xml'}")

@@ -16,6 +16,7 @@ import re
 import secrets
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path
 
 import mujoco
@@ -29,6 +30,9 @@ BODY_FIELDS = ("body_pos", "body_quat", "body_mass", "body_inertia", "body_ipos"
 GEOM_FIELDS = ("geom_size", "geom_pos", "geom_quat", "geom_rbound", "geom_aabb")
 SITE_FIELDS = ("site_pos", "site_quat")
 MORPHOLOGY_FIELDS = BODY_FIELDS + GEOM_FIELDS + SITE_FIELDS
+# Per-env joint data, over the hinge joints in model order (bank "joint_names"):
+# each robot's own joint limits and default pose (e.g. knee-forward legs).
+JOINT_ARRAYS = ("jnt_range", "default_joint_pos")
 
 # Fields that define structure; they must be identical across all robots.
 STRUCTURE_FIELDS = ("body_parentid", "body_sameframe", "body_simple", "jnt_type",
@@ -65,16 +69,25 @@ def _compile(xml: str) -> mujoco.MjModel:
   return mujoco.MjModel.from_xml_string(xml, mesh_assets())
 
 
+def _resolved_pose(model: mujoco.MjModel, init_joint_pos: dict[str, float]) -> dict[str, float]:
+  """Joint name -> value of a {regex or name: value} pose, over the hinges."""
+  pose = {}
+  for j in range(1, model.njnt):
+    name = model.joint(j).name
+    for pattern, value in init_joint_pos.items():
+      if re.fullmatch(pattern, name):
+        pose[name] = value
+        break
+  return pose
+
+
 def _posed(model: mujoco.MjModel, init_joint_pos: dict[str, float]) -> mujoco.MjData:
   """Kinematics of the robot in `init_joint_pos` with its base at z = 0."""
   data = mujoco.MjData(model)
   data.qpos[:] = model.qpos0
   data.qpos[2] = 0.0
-  for j in range(1, model.njnt):
-    name = model.joint(j).name
-    for pattern, value in init_joint_pos.items():
-      if re.fullmatch(pattern, name):
-        data.qpos[model.jnt_qposadr[j]] = value
+  for name, value in _resolved_pose(model, init_joint_pos).items():
+    data.qpos[model.jnt_qposadr[model.joint(name).id]] = value
   mujoco.mj_kinematics(model, data)
   return data
 
@@ -157,6 +170,11 @@ def _extract(model: mujoco.MjModel, init_joint_pos: dict[str, float],
   """Per-env fields, structure fields and per-robot scalars of one compiled robot."""
   fields = {f: getattr(model, f)[1:] if f in BODY_FIELDS else getattr(model, f)
             for f in MORPHOLOGY_FIELDS}
+  hinges = range(1, model.njnt)  # Joint 0 is the free joint.
+  fields["jnt_range"] = model.jnt_range[1:].copy()
+  pose = _resolved_pose(model, init_joint_pos)
+  fields["default_joint_pos"] = np.array([pose.get(model.joint(j).name, 0.0)
+                                          for j in hinges])
   structure = {f: getattr(model, f).copy() for f in STRUCTURE_FIELDS}
   leg_length, foot_radius = _leg_dimensions(model)
   scalars = {
@@ -177,17 +195,19 @@ def _make_one(args):
 
 
 def _save_bank(out_dir: Path, reference: mujoco.MjModel, seeds,
-               scalars: dict[str, list], fields) -> Path:
+               scalars: dict[str, list], fields, sources=None) -> Path:
   """`scalars`: total_mass, max_joint_velocity, root_height, base_above_feet,
   leg_length, foot_radius, one value per robot."""
   bank_path = out_dir / BANK_FILE
   np.savez(
     bank_path,
     seeds=np.array(seeds),
+    sources=np.array(sources if sources is not None else ["generated"] * len(seeds)),
     **{k: np.array(v) for k, v in scalars.items()},
     body_names=np.array(_names(reference, mujoco.mjtObj.mjOBJ_BODY, reference.nbody)[1:]),
     geom_names=np.array(_names(reference, mujoco.mjtObj.mjOBJ_GEOM, reference.ngeom)),
     site_names=np.array(_names(reference, mujoco.mjtObj.mjOBJ_SITE, reference.nsite)),
+    joint_names=np.array(_names(reference, mujoco.mjtObj.mjOBJ_JOINT, reference.njnt)[1:]),
     **{f: np.stack(v) for f, v in fields.items()},
   )
   return bank_path
@@ -218,52 +238,80 @@ def single_robot_bank(xml: str, assets: dict[str, bytes], out_dir: Path,
 
 
 def generate_bank(num_envs: int, out_dir: Path, cfg: MorphologyGenCfg,
-                  init_joint_pos: dict[str, float]) -> Path:
+                  init_joint_pos: dict[str, float],
+                  proxies: dict[str, int] | None = None) -> Path:
   """Generate, compile and validate one robot per env.
 
+  The first num_envs - sum(proxies) envs get random generated robots; then
+  `proxies` (real robot name -> number of envs) adds that many copies of a
+  proxy of each real robot (proxy.py: the real robot's numbers in the
+  generated structure, with its own joint ranges and default pose).
+
   Writes `out_dir/env_XXXXX.xml` (robot of env i) and `out_dir/morphologies.npz`
-  (per-env fields). Returns the path of the .npz.
+  (per-env fields; "sources" says "generated" or the real robot's name).
+  Returns the path of the .npz.
   """
+  proxies = {k: v for k, v in (proxies or {}).items() if v > 0}
+  num_generated = num_envs - sum(proxies.values())
+  if num_generated < 1:
+    raise ValueError(f"{num_envs} envs leave no room for generated robots "
+                     f"next to {sum(proxies.values())} proxies.")
   out_dir.mkdir(parents=True, exist_ok=True)
   base_seed = cfg.seed if cfg.seed is not None else secrets.randbits(31)
   jobs = [(base_seed + i, cfg.delta_scale, init_joint_pos, cfg.foot_clearance)
-          for i in range(num_envs)]
+          for i in range(num_generated)]
   workers = cfg.workers or os.cpu_count() or 1
 
-  print(f"[INFO] Generating {num_envs} random quadrupeds "
+  print(f"[INFO] Generating {num_generated} random quadrupeds "
         f"(base seed {base_seed}, {workers} workers)...", flush=True)
-  if workers == 1 or num_envs == 1:
+  if workers == 1 or num_generated == 1:
     results = map(_make_one, jobs)
   else:
     pool = ProcessPoolExecutor(max_workers=workers)
-    results = pool.map(_make_one, jobs, chunksize=max(1, num_envs // (workers * 8)))
+    results = pool.map(_make_one, jobs,
+                       chunksize=max(1, num_generated // (workers * 8)))
+
+  def generated():
+    for result in results:
+      yield ("generated", *result)
+
+  def proxy_results():
+    from .proxy import make_proxy  # Imports adapt.py; only needed here.
+    for name, count in proxies.items():
+      *result, notes = make_proxy(name, init_joint_pos, cfg.foot_clearance)
+      print(f"[INFO] Proxy of {name} x {count}" + "".join(f"\n[INFO]   {n}" for n in notes),
+            flush=True)
+      yield from [tuple(result)] * count
 
   reference = None
   seeds = []
+  sources = []
   scalars: dict[str, list] = {}
-  fields = {f: [] for f in MORPHOLOGY_FIELDS}
+  fields: dict[str, list] = {}
   ref_structure = None
-  for i, (seed, xml, env_scalars, env_fields, structure) in enumerate(results):
+  for i, (source, seed, xml, env_scalars, env_fields, structure) in enumerate(
+      chain(generated(), proxy_results())):
     if ref_structure is None:
       ref_structure = structure
       reference = _compile(xml)
     for f in STRUCTURE_FIELDS:
       if not np.array_equal(structure[f], ref_structure[f]):
         raise RuntimeError(
-          f"Robot of env {i} (seed {seed}) differs from env 0 in '{f}'; "
+          f"Robot of env {i} ({source}, seed {seed}) differs from env 0 in '{f}'; "
           "all envs must share one model structure.")
     (out_dir / f"env_{i:05d}.xml").write_text(xml)
     seeds.append(seed)
+    sources.append(source)
     for k, v in env_scalars.items():
       scalars.setdefault(k, []).append(v)
-    for f in MORPHOLOGY_FIELDS:
-      fields[f].append(env_fields[f])
+    for f, v in env_fields.items():
+      fields.setdefault(f, []).append(v)
     if (i + 1) % 1024 == 0 or i + 1 == num_envs:
       print(f"[INFO]   compiled {i + 1}/{num_envs}", flush=True)
-  if workers > 1 and num_envs > 1:
+  if workers > 1 and num_generated > 1:
     pool.shutdown()
 
-  bank_path = _save_bank(out_dir, reference, seeds, scalars, fields)
+  bank_path = _save_bank(out_dir, reference, seeds, scalars, fields, sources)
 
   def span(key: str, fmt: str) -> str:
     return f"{min(scalars[key]):{fmt}}-{max(scalars[key]):{fmt}}"

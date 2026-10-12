@@ -19,9 +19,10 @@ from mjlab.rl.runner import MjlabOnPolicyRunner
 # PLOT_EVERY iterations and when training ends.
 PLOT_EVERY = 10
 
-# Robots are split into thirds by leg length; each third's mean episode return
-# is logged as Morphology/mean_reward_{small,medium,large} (and plotted with
-# --plot), to catch the policy favouring one body size.
+# Finished-episode returns are grouped, to catch the policy favouring some
+# bodies: by robot type (generated, spot, a1, ...) when the bank mixes types
+# (train.py --generalise), else into thirds by leg length. Each group's mean is
+# logged as Morphology/mean_reward_<group> (and plotted with --plot).
 SIZE_BUCKETS = ("small", "medium", "large")
 
 
@@ -30,19 +31,29 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-    # (bucket, return) of the last 100 episodes: the same window as rsl_rl's
-    # rewbuffer, so the overall mean is the episode-weighted mean of the thirds.
+    # (group, return) of the last 100 episodes: the same window as rsl_rl's
+    # rewbuffer, so the overall mean is the episode-weighted mean of the groups.
     self._sized_returns: deque[tuple[str, float]] = deque(maxlen=100)
+    self._groups: tuple[str, ...] = ()
     self._track_size_buckets()
 
   def _track_size_buckets(self) -> None:
-    """Split finished-episode returns by robot size (rank 0 only)."""
+    """Split finished-episode returns by robot type or size (rank 0 only)."""
     if self.logger.log_dir is None or self.logger.disable_logs:
       return
     env = self.env.unwrapped
-    length = env.morph_scales.length
-    edges = torch.quantile(length, torch.tensor([1 / 3, 2 / 3], device=length.device))
-    self._size_bucket = torch.bucketize(length, edges)  # [N] in {0, 1, 2}
+    sources = getattr(env, "morph_sources", None)
+    if sources is not None and len(set(sources)) > 1:
+      self._groups = tuple(dict.fromkeys(sources))  # First-seen order.
+      self._size_bucket = torch.tensor([self._groups.index(s) for s in sources],
+                                       device=env.device)
+      self._group_label = {g: g for g in self._groups}
+    else:
+      self._groups = SIZE_BUCKETS
+      length = env.morph_scales.length
+      edges = torch.quantile(length, torch.tensor([1 / 3, 2 / 3], device=length.device))
+      self._size_bucket = torch.bucketize(length, edges)  # [N] in {0, 1, 2}
+      self._group_label = {g: f"{g} legs" for g in self._groups}
     process = self.logger.process_env_step
     log = self.logger.log
 
@@ -51,7 +62,7 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
       if torch.any(done):
         returns = (self.logger.cur_reward_sum + rewards.flatten())[done].tolist()
         for bucket, ret in zip(self._size_bucket[done].tolist(), returns):
-          self._sized_returns.append((SIZE_BUCKETS[bucket], ret))
+          self._sized_returns.append((self._groups[bucket], ret))
       process(rewards, dones, extras, *a, **kw)
 
     def log_with_sizes(it, *a, **kw):
@@ -66,9 +77,9 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
     self.logger.log = log_with_sizes
 
   def _size_means(self) -> dict[str, float | None]:
-    """Mean recent episode return per size third (None if it has none)."""
+    """Mean recent episode return per group (None if it has none)."""
     means = {}
-    for bucket in SIZE_BUCKETS:
+    for bucket in self._groups:
       returns = [r for b, r in self._sized_returns if b == bucket]
       means[bucket] = statistics.mean(returns) if returns else None
     return means
@@ -81,7 +92,7 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
     self._reward_png = Path(self.logger.log_dir) / "mean_reward.png"
     # (iteration, overall mean, {bucket: mean or None})
     self._reward_history: list[tuple[int, float, dict]] = []
-    columns = ",".join(f"mean_reward_{b}" for b in SIZE_BUCKETS)
+    columns = ",".join(f"mean_reward_{b}" for b in self._groups)
     self._reward_csv.write_text(f"iteration,mean_reward,{columns}\n")
     log = self.logger.log
 
@@ -113,11 +124,11 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
     its = [h[0] for h in history]
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.plot(its, [h[1] for h in history], linewidth=1.8, color="black", label="all")
-    for bucket in SIZE_BUCKETS:
+    for bucket in self._groups:
       points = [(h[0], h[2][bucket]) for h in history if h[2][bucket] is not None]
       if points:
         x, y = zip(*points)
-        ax.plot(x, y, linewidth=1.0, alpha=0.8, label=f"{bucket} legs")
+        ax.plot(x, y, linewidth=1.0, alpha=0.8, label=self._group_label[bucket])
     ax.legend(loc="best", fontsize=8)
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Mean episode reward")

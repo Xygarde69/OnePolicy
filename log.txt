@@ -3,7 +3,7 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-12  Remove reward-gated command boost; add train.py --plot
+2026-10-12  Remove reward-gated command boost; add train.py --plot (18be264)
   - Removed the yaw / x-y command boost from tasks/velocity/rl/runner.py
     (and the ang_vel_z_scale / lin_vel_scale fields it set on the command
     config). It multiplied command ranges x5 once the mean episode reward
@@ -24,14 +24,91 @@ Commit hashes refer to the commit that made the change.
     with zero. Stick direction not yet verified on screen.
 
 2026-10-12  KAIST Hound reward terms (68e8a31)
-  - From arXiv 2312.17507 Table I, weights divided by its tracking weight of
-    6 and normalised per robot to Go2 units: foot_contact_velocity (-0.5),
-    diagonal_gait (+0.2, above 1.5 m/s), joint torque (-1e-4), joint velocity
-    (-5e-5), action_acc_l2 (-0.01). soft_landing halved to -5e-4. Tracking
-    weights ramp to 2.0 / 1.5 with the command curriculum. Full rationale in
-    CLAUDE.md.
-  - Checked: train_test.py headless run loads all terms without errors.
-    Not yet trained.
+  Source paper
+    Shin, Song, Ji, Park, "Actuator-Constrained Reinforcement Learning for
+    High-Speed Quadrupedal Locomotion", arXiv 2312.17507 (Dec 2023). KAIST
+    Hound, 45 kg, runs 6.5 m/s on a treadmill. Three ingredients:
+      1. Motor operating region (MOR, Sec. II-A..C): joint torque is mapped
+         to motor space and clipped to the linear torque-speed band
+         -V_bus <= (R/Kt) tau + omega/Kv <= V_bus, capped at tau_peak. The
+         band is wider in the braking (2nd/4th) quadrants.
+      2. Reward terms (Sec. II-D/E, Table I), notably a contact velocity
+         penalty and a diagonal-pair gait reward.
+      3. Curriculum (Sec. II-E.3): forward command widened from
+         U(-0.3, 1.5) to U(-1.4, 7.0) m/s, with the tracking weights raised
+         as speed grows.
+    Real-robot ablation (Table II), top speed: full method 6.5 m/s, without
+    gait reward 6.0, without the light foot 5.5, without MOR 4.5.
+
+  Paper -> this project
+    MOR clipping: ALREADY PRESENT. mjlab's DcMotorActuator (_clip_effort)
+      applies the same linear torque-speed band, wider in the braking
+      quadrants, scaled per robot by tasks/velocity/mdp/morphology.py. No
+      change. Open question: saturation_effort == effort_limit in
+      assets/morph_quadruped/constants.py leaves no constant-torque region at
+      low speed; raise saturation_effort if the real motors allow it.
+    Weight convention: paper weights are relative to C_V = 6, ours to
+      track_linear_velocity = 1, so paper weights were divided by 6. Every new
+      term is normalised to Go2 units by Froude scaling (scaling.py) so robot
+      size does not change its pull.
+
+  Added terms (tasks/velocity/mdp/rewards.py, velocity_env_cfg.py)
+    - foot_contact_velocity, weight -0.5   [paper: C_contact = -6.0]
+        sum over feet of v_z^2 in the step before first contact, / s_L.
+        Paper adds it because RaiSim's hard contacts don't model the bounce
+        (restitution) of a fast touchdown. MuJoCo's soft contacts make that
+        reason weaker, but pre-impact speed is a cleaner signal than the
+        touchdown force soft_landing samples at 50 Hz.
+    - diagonal_gait, weight +0.2   [paper: C_gait = 1.2]
+        1 when exactly one diagonal pair (FR+RL or FL+RR) is in stance, no
+        clock. Paper: without it motor power biased to one side and a single
+        saturated motor capped speed (6.0 vs 6.5 m/s). Gated to commands
+        above 1.5 m/s (Go2 units) so the clocked foot_gait still shapes
+        walking; foot_gait's fixed 0.6 s period caps stride rate at speed.
+    - joint_torques_l2 (scaled_joint_torques_l2), weight -1e-4
+        [paper: C_tau = -2e-4 with C_V = 6]. Was missing. Torque divided by
+        s_m * s_L. Weight is an estimate: Hound's torques are far larger than
+        a Go2's, so the paper's ratio was not copied directly.
+    - joint_vel_l2 (scaled_joint_vel_l2), weight -5e-5
+        [paper: C_qdot = -3e-4 -> /6]. Was missing. Squared speed * s_L.
+    - action_acc_l2, weight -0.01   [paper: C_smoothness2 = -0.8]
+        Second difference of the actions. Paper Sec. III-D / Fig. 11: a torque
+        command beyond the MOR is clipped, so the torque penalty never sees
+        it; the jerky action needed to produce it is what the smoothness
+        terms penalise, and that is how the policy learns to stay inside the
+        motor band (Fig. 12: fewer MOR violations). Without smoothness terms
+        their real robot vibrated.
+
+  Changed weights
+    - soft_landing -1e-3 -> -5e-4: impacts now mostly covered by
+      foot_contact_velocity.
+    - track_linear_velocity 1.0 -> 2.0 and track_angular_velocity 1.0 -> 1.5
+      at step 5000*24, alongside the command-range widening (reward_weight
+      curriculum). Paper: as speed rises, the effort penalties grow and the
+      policy abandons fast commands unless tracking weights rise too.
+
+  Compared and left unchanged
+    - action_rate_l2 -0.05 [paper C_smoothness1 = -2.5 on desired joint
+      positions]: with our 0.25 action scale it is already as strong
+      relative to tracking.
+    - joint_acc_l2 -2.5e-7 [paper C_qddot = -6.7e-3 on per-step velocity
+      change]: same order after converting to rad/s^2.
+    - foot_slip, foot_clearance, body_orientation_l2, body_ang_vel /
+      angular_momentum (paper's base motion term), pose (paper's joint
+      position term): equivalents already present.
+    - foot_gait, stand_still, is_terminated: walking/standing shaping the
+      paper does not cover.
+
+  Not adopted (not reward changes)
+    - Lightweight foot redesign (hardware).
+    - Motor current-torque nonlinearity compensation (real-robot only).
+    - Episode start command ramp / carrying the last state into the next
+      episode (Sec. II-E.3): candidates if robots stall on large command
+      jumps.
+
+  Checked: train_test.py headless run loads all 19 reward terms and the 3
+    curriculum terms without errors. Not yet trained; tuning notes in
+    CLAUDE.md (halve joint_torques_l2 first if low-speed tracking stalls).
 
 2026-10-12  Shin geoms, temp robot dirs, command boost (b84afeb)
   - adapt.py names collision geoms that reach the foot tip

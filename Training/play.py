@@ -112,6 +112,9 @@ class PlayConfig:
   """Full-stick sideways speed [Go2 m/s]. None: the task's command range."""
   joystick_max_yaw: float | None = None
   """Yaw rate while L1/R1 is held [Go2 rad/s]. None: the task's command range."""
+  joystick_scale: float = 2.0
+  """Multiplies all four joystick speeds above (forward, backward, sideways,
+  yaw), whether defaulted or given."""
 
 
 def resolve_pose(pattern_pose: dict[str, float], names) -> dict[str, float]:
@@ -209,10 +212,11 @@ def attach_gamepad(env: ManagerBasedRlEnv, cfg: PlayConfig) -> None:
   def pick(value: float | None, default: float) -> float:
     return default if value is None else value
 
-  max_forward = pick(cfg.joystick_max_forward, ranges.lin_vel_x[1])
-  max_backward = pick(cfg.joystick_max_backward, -ranges.lin_vel_x[0])
-  max_lateral = pick(cfg.joystick_max_lateral, ranges.lin_vel_y[1])
-  max_yaw = pick(cfg.joystick_max_yaw, ranges.ang_vel_z[1])
+  k = cfg.joystick_scale
+  max_forward = k * pick(cfg.joystick_max_forward, ranges.lin_vel_x[1])
+  max_backward = k * pick(cfg.joystick_max_backward, -ranges.lin_vel_x[0])
+  max_lateral = k * pick(cfg.joystick_max_lateral, ranges.lin_vel_y[1])
+  max_yaw = k * pick(cfg.joystick_max_yaw, ranges.ang_vel_z[1])
   pad = DualSenseGamepad(cfg.joystick_device)
 
   def command() -> tuple[float, float, float]:

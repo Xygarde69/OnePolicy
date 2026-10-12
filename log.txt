@@ -3,7 +3,16 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-12  Joystick: right stick translates, L1/R1 turn
+2026-10-12  Joystick speeds x2
+  - New --joystick-scale (default 2.0) multiplies all four joystick speeds
+    (forward, backward, sideways, L1/R1 yaw), defaulted or given.
+  - Why: requested; the flat play command range (1.0 / 0.5 / 0.5 m/s,
+    0.5 rad/s) is too slow to drive comfortably.
+  - Checked: play env prints forward 2.00 / back 1.00 / sideways 1.00 m/s,
+    turn 1.00 rad/s (flat task). Speeds beyond the training command range
+    are out of distribution for the policy; lower the scale if it stumbles.
+
+2026-10-12  Joystick: right stick translates, L1/R1 turn (004b071)
   - Right stick up/down = forward/back, left/right = sideways (new: lateral
     commands); L1 = turn left, R1 = turn right at the full yaw rate, both
     held = no turn. New --joystick-max-lateral; --joystick-max-yaw is now

@@ -310,6 +310,7 @@ option is given.
 | `--no-terminations True` | `False` | Never reset the robot |
 | `--joystick True` | `False` | Drive with a DualSense: right stick up/down = forward/back, left/right = sideways; L1 / R1 = turn left / right. Read from `--joystick-device` (`/dev/input/js0`) |
 | `--joystick-max-forward/-backward/-lateral/-yaw` | task range | Full-stick speeds and L1/R1 turn rate (Go2 m/s and rad/s, scaled to the robot) |
+| `--joystick-scale` | `2.0` | Multiplies all four joystick speeds |
 
 Booleans take a value (`--random True`), the mjlab convention.
 

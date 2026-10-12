@@ -114,6 +114,10 @@ class PlayConfig:
   """Full-stick sideways speed [Go2 m/s]. None: the task's command range."""
   joystick_max_yaw: float | None = None
   """Yaw rate while L1/R1 is held [Go2 rad/s]. None: the task's command range."""
+  command: tuple[float, ...] = ()
+  """Fixed velocity command "(forward, left, yaw)" [m/s, m/s, rad/s] in Go2
+  units, scaled to the robot, instead of random commands, e.g.
+  --command "(1.0, 0.0, 0.2)". Ignored with --joystick."""
   joystick_scale: float = 2.0
   """Multiplies all four joystick speeds above (forward, backward, sideways,
   yaw), whether defaulted or given."""
@@ -339,6 +343,12 @@ def _play(cfg: PlayConfig, robot_dir: Path):
 
   if cfg.joystick:
     attach_gamepad(env, cfg)
+  elif cfg.command:
+    if len(cfg.command) != 3:
+      raise ValueError(f"--command takes 3 numbers (forward left yaw), got {cfg.command}")
+    command = tuple(cfg.command)
+    env.command_manager.get_term("twist").gamepad = lambda: command
+    print(f"[INFO]: Fixed command (forward, left, yaw) = {command} (Go2 units)")
 
   if TRAINED_MODE and cfg.video:
     print("[INFO] Recording videos during play")

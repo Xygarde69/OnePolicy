@@ -47,6 +47,9 @@ NOMINAL_LEG_LENGTH = 0.426
 """Go2 thigh joint -> knee -> foot centre [m] (0.213 + 0.213)."""
 NOMINAL_FOOT_RADIUS = 0.022
 """Go2 foot sphere radius [m]."""
+NOMINAL_BASE_ABOVE_FEET = 0.30
+"""Placeholder base height above the feet [m] until the `morphology` event sets
+each robot's own (generation/bank.py, _base_above_feet)."""
 
 # DC motors rather than MuJoCo position actuators, so that each robot's joint
 # velocity limit (create_robot's maxJointVelocity) holds: torque falls linearly

@@ -65,6 +65,7 @@ def apply_morphologies(
   scales.length[env_ids] = per_env("leg_length") / nominal_leg_length
   scales.mass[env_ids] = per_env("total_mass") / nominal_mass
   scales.foot_radius[env_ids] = per_env("foot_radius")
+  scales.base_above_feet[env_ids] = per_env("base_above_feet")
 
   mj_model = env.sim.mj_model
   prefix = f"{asset_cfg.name}/"

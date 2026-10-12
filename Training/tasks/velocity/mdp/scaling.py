@@ -21,7 +21,10 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from assets.morph_quadruped.constants import NOMINAL_FOOT_RADIUS
+from assets.morph_quadruped.constants import (
+  NOMINAL_BASE_ABOVE_FEET,
+  NOMINAL_FOOT_RADIUS,
+)
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -37,6 +40,8 @@ class MorphScales:
   """Total mass / Go2's."""
   foot_radius: torch.Tensor
   """Foot radius [m] (absolute)."""
+  base_above_feet: torch.Tensor
+  """Base height above the mean foot centre in the default pose [m] (absolute)."""
 
   @property
   def speed(self) -> torch.Tensor:
@@ -59,7 +64,8 @@ def get_morph_scales(env: ManagerBasedRlEnv) -> MorphScales:
   if scales is None:
     ones = torch.ones(env.num_envs, device=env.device)
     scales = MorphScales(length=ones.clone(), mass=ones.clone(),
-                         foot_radius=ones * NOMINAL_FOOT_RADIUS)
+                         foot_radius=ones * NOMINAL_FOOT_RADIUS,
+                         base_above_feet=ones * NOMINAL_BASE_ABOVE_FEET)
     env.morph_scales = scales
   return scales
 

@@ -477,6 +477,32 @@ def scaled_joint_acc_l2(
   return acc_sq * get_morph_scales(env).length ** 2
 
 
+def base_height(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize base height off the robot's own standing height, as a fraction.
+
+  Height is the base above the mean of the feet in contact, so it holds on
+  any terrain; it is compared with the robot's height above its feet in the
+  default pose (env.morph_scales.base_above_feet). The error is a fraction of
+  that height, so it means the same for every robot. Zero in flight.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+  assert contact_sensor.data.found is not None
+  in_contact = (contact_sensor.data.found > 0).float()  # [B, N]
+  foot_z = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # [B, N]
+  num_contacts = torch.sum(in_contact, dim=1)
+  ground_z = torch.sum(foot_z * in_contact, dim=1) / torch.clamp(num_contacts, min=1)
+  height = asset.data.root_link_pos_w[:, 2] - ground_z
+  target = get_morph_scales(env).base_above_feet
+  error = (height - target) / target
+  env.extras["log"]["Metrics/base_height_ratio_mean"] = torch.mean(height / target)
+  return torch.square(error) * (num_contacts > 0).float()
+
+
 class variable_posture:
   """Penalize deviation from default pose with speed-dependent tolerance.
 

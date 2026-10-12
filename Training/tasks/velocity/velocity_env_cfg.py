@@ -364,6 +364,16 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "joint_torques_l2": RewardTermCfg(func=mdp.scaled_joint_torques_l2, weight=-1e-4),
     "joint_vel_l2": RewardTermCfg(func=mdp.scaled_joint_vel_l2, weight=-5e-5),
     "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
+    # Morphology-general terms: every quantity is a ratio to the robot's own
+    # size or limits, so the weight means the same on every robot.
+    "base_height": RewardTermCfg(
+      func=mdp.base_height,
+      weight=-5.0,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+      },
+    ),
     "stand_still": RewardTermCfg(
       func=mdp.stand_still,
       weight=-1.0,

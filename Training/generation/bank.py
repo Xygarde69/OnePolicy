@@ -65,9 +65,8 @@ def _compile(xml: str) -> mujoco.MjModel:
   return mujoco.MjModel.from_xml_string(xml, mesh_assets())
 
 
-def _standing_height(model: mujoco.MjModel, init_joint_pos: dict[str, float],
-                     clearance: float) -> float:
-  """Base height that puts the lowest foot `clearance` above the floor."""
+def _posed(model: mujoco.MjModel, init_joint_pos: dict[str, float]) -> mujoco.MjData:
+  """Kinematics of the robot in `init_joint_pos` with its base at z = 0."""
   data = mujoco.MjData(model)
   data.qpos[:] = model.qpos0
   data.qpos[2] = 0.0
@@ -77,6 +76,24 @@ def _standing_height(model: mujoco.MjModel, init_joint_pos: dict[str, float],
       if re.fullmatch(pattern, name):
         data.qpos[model.jnt_qposadr[j]] = value
   mujoco.mj_kinematics(model, data)
+  return data
+
+
+def _base_above_feet(model: mujoco.MjModel, init_joint_pos: dict[str, float]) -> float:
+  """Base height above the mean foot-site height in the default pose [m].
+
+  The base_height reward's target: measured against the feet rather than the
+  floor, so it holds on any terrain.
+  """
+  data = _posed(model, init_joint_pos)
+  feet = [model.site(leg).id for leg in ("FL", "FR", "RL", "RR")]
+  return float(-np.mean([data.site_xpos[s][2] for s in feet]))
+
+
+def _standing_height(model: mujoco.MjModel, init_joint_pos: dict[str, float],
+                     clearance: float) -> float:
+  """Base height that puts the lowest foot `clearance` above the floor."""
+  data = _posed(model, init_joint_pos)
   feet = [model.geom(f"{leg}_foot_collision").id for leg in ("FL", "FR", "RL", "RR")]
 
   def bottom(g):
@@ -116,6 +133,7 @@ def _extract(model: mujoco.MjModel, init_joint_pos: dict[str, float],
   leg_length, foot_radius = _leg_dimensions(model)
   scalars = {
     "root_height": _standing_height(model, init_joint_pos, clearance),
+    "base_above_feet": _base_above_feet(model, init_joint_pos),
     "leg_length": leg_length,
     "foot_radius": foot_radius,
   }
@@ -132,8 +150,8 @@ def _make_one(args):
 
 def _save_bank(out_dir: Path, reference: mujoco.MjModel, seeds,
                scalars: dict[str, list], fields) -> Path:
-  """`scalars`: total_mass, max_joint_velocity, root_height, leg_length,
-  foot_radius, one value per robot."""
+  """`scalars`: total_mass, max_joint_velocity, root_height, base_above_feet,
+  leg_length, foot_radius, one value per robot."""
   bank_path = out_dir / BANK_FILE
   np.savez(
     bank_path,

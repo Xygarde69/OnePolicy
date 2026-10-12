@@ -3,7 +3,17 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-12  play.py --command: fixed velocity command
+2026-10-12  Fix play.py --random crash ("Error opening file 'hip.obj'")
+  - drop_body_contact_if_unmatched (added in c816bf3) compiled the robot XML
+    with MjModel.from_xml_path, which can't find generated robots' hip.obj:
+    training supplies that mesh from memory (mesh_assets), it isn't written
+    next to the XML. Now compiled through constants.get_spec, the loader the
+    env itself uses, which supplies both those meshes and adapted robots' own.
+  - Missed because the check was only tested on adapted (named) robots.
+  - Checked: the check passes for --random (seed 7), go2, spot, barkour_v0,
+    a1, byte01_v1, byte01_v2_primitive (sensor dropped only for the last).
+
+2026-10-12  play.py --command: fixed velocity command (7d21d47)
   - --command "(forward, left, yaw)" [Go2 m/s, m/s, rad/s, scaled to the
     robot] holds that command instead of sampling random ones (Python tuple
     syntax: mjlab's tyro flags use UsePythonSyntaxForLiteralCollections).

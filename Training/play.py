@@ -33,7 +33,6 @@ from typing import Literal
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import mujoco  # noqa: E402
 import torch  # noqa: E402
 import tyro  # noqa: E402
 
@@ -46,7 +45,7 @@ from mjlab.utils.torch import configure_torch_backends  # noqa: E402
 from mjlab.utils.wrappers import VideoRecorder  # noqa: E402
 from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer  # noqa: E402
 
-from assets.morph_quadruped.constants import INIT_JOINT_POS  # noqa: E402
+from assets.morph_quadruped.constants import INIT_JOINT_POS, get_spec  # noqa: E402
 from gamepad import DualSenseGamepad  # noqa: E402
 from generation.adapt import adapt_quadruped, fit_pose  # noqa: E402
 from generation.bank import (  # noqa: E402
@@ -271,7 +270,9 @@ def drop_body_contact_if_unmatched(env_cfg, xml_path: Path) -> None:
   patterns = sensor.primary.pattern
   patterns = (patterns,) if isinstance(patterns, str) else patterns
   excludes = sensor.primary.exclude
-  model = mujoco.MjModel.from_xml_path(str(xml_path))
+  # get_spec supplies the meshes training uses (generated robots' hip.obj is
+  # not written next to their XML) as well as an adapted robot's own.
+  model = get_spec(str(xml_path)).compile()
   names = [model.geom(i).name for i in range(model.ngeom)]
   matched = [n for n in names if any(re.fullmatch(p, n) for p in patterns)
              and not any(re.fullmatch(e, n) for e in excludes)]

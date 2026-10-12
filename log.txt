@@ -3,6 +3,22 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
+2026-10-12  Joystick: right stick translates, L1/R1 turn
+  - Right stick up/down = forward/back, left/right = sideways (new: lateral
+    commands); L1 = turn left, R1 = turn right at the full yaw rate, both
+    held = no turn. New --joystick-max-lateral; --joystick-max-yaw is now
+    the L1/R1 rate. Sideways speed is speed-scaled per robot like forward.
+  - Why: one stick could only drive and turn, so the robot could never be
+    commanded sideways; separating turning onto the shoulder buttons gives
+    all three command axes.
+  - Axis/button numbers come from the kernel's joystick maps (JSIOCGAXMAP /
+    JSIOCGBTNMAP: ABS_RX/ABS_RY, BTN_TL/BTN_TR) instead of hard-coded
+    indices, so a different driver ordering still maps correctly. On this
+    DualSense: right stick = axes 3/4, L1/R1 = buttons 4/5.
+  - Checked: injected stick/button states give (forward, left, turn) = up
+    (1,0,0), left (0,1,0), L1 (0,0,1), R1 (0,0,-1), L1+R1 (0,0,0); play env at
+    rest commands zero. Not yet driven on screen.
+
 2026-10-12  Morphology-general rewards and training (d9b9c70, fd3589f,
             5bd09c9, 5b6fd25, c06aaef, 60c7f8b)
   Why: the policy must work on any quadruped of this shape. Measured on 200

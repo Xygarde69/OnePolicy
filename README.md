@@ -308,8 +308,8 @@ option is given.
 | `--viewer` | `auto` | `native` (MuJoCo window), `viser` (browser), or `auto` |
 | `--video True` | `False` | Record a video into the checkpoint's folder |
 | `--no-terminations True` | `False` | Never reset the robot |
-| `--joystick True` | `False` | Drive with a DualSense right stick (up/down: forward/back, left/right: turn), read from `--joystick-device` (`/dev/input/js0`) |
-| `--joystick-max-forward/-backward/-yaw` | task range | Full-stick speeds (Go2 m/s, scaled to the robot; rad/s) |
+| `--joystick True` | `False` | Drive with a DualSense: right stick up/down = forward/back, left/right = sideways; L1 / R1 = turn left / right. Read from `--joystick-device` (`/dev/input/js0`) |
+| `--joystick-max-forward/-backward/-lateral/-yaw` | task range | Full-stick speeds and L1/R1 turn rate (Go2 m/s and rad/s, scaled to the robot) |
 
 Booleans take a value (`--random True`), the mjlab convention.
 

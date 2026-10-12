@@ -7,15 +7,15 @@ env, so env i simulates robot i:
   python train.py --num-envs 4096 --task rough   # rough terrain
   python train.py --num-envs 4096 --morphology.seed 7
   python train.py --num-envs 4096 --plot         # also plot the mean reward
-  python train.py --num-envs 4096 --generalise   # 2/3 generated, 1/3 real robots
+  python train.py --num-envs 4096 --generalise   # 1/2 generated, 1/2 real robots
 
 The robots live in a temporary directory that is deleted when training ends;
 the base seed is saved as <log_dir>/morphology_seed.txt (rerun with
 --morphology.seed <seed> to get the same robots). All --env.* and --agent.*
 overrides from the Unitree train script still apply.
 
-With --generalise, 2/3 of the envs get generated robots and the remaining
-third is split equally between proxies of Spot, A1, Barkour v0 and Go2
+With --generalise, half of the envs get generated robots and the other
+half is split equally between proxies of Spot, A1, Barkour v0 and Go2
 (GENERALISE_ROBOTS): each real robot rebuilt in the generated model structure,
 with its own dimensions, masses, joint limits and default pose (see
 generation/proxy.py). Episode reward is then logged per robot type.
@@ -79,7 +79,7 @@ class TrainConfig:
   enable_nan_guard: bool = False
   plot: bool = False
   generalise: bool = False
-  """2/3 generated robots, 1/3 split equally between proxies of
+  """1/2 generated robots, 1/2 split equally between proxies of
   GENERALISE_ROBOTS (generation/proxy.py)."""
   """Plot the mean episode reward per iteration to <log_dir>/mean_reward.png."""
   symmetry: bool = True
@@ -193,9 +193,9 @@ GENERALISE_ROBOTS = ("spot", "a1", "barkour_v0", "go2")
 
 
 def generalise_split(num_envs: int) -> dict[str, int]:
-  """Envs per real robot for --generalise: the third of num_envs left after
-  2/3 generated robots, split equally (the first robots take any remainder)."""
-  num_real = num_envs - round(2 * num_envs / 3)
+  """Envs per real robot for --generalise: the half of num_envs left after
+  the generated robots, split equally (the first robots take any remainder)."""
+  num_real = num_envs - round(num_envs / 2)
   share, extra = divmod(num_real, len(GENERALISE_ROBOTS))
   split = {name: share + (i < extra) for i, name in enumerate(GENERALISE_ROBOTS)}
   print(f"[INFO] --generalise: {num_envs - num_real} generated robots, "

@@ -15,6 +15,8 @@ from mjlab.utils.lab_api.math import (
   wrap_to_pi,
 )
 
+from .scaling import get_morph_scales
+
 if TYPE_CHECKING:
   import viser
 
@@ -75,6 +77,8 @@ class UniformVelocityCommand(CommandTerm):
     self.vel_command_b[env_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y)
     self.vel_command_b[env_ids, 2] = r.uniform_(*self.cfg.ranges.ang_vel_z)
     self.vel_command_b[env_ids, :] *= (torch.norm(self.vel_command_b[env_ids, :], dim=1) > 0.1).unsqueeze(1)
+    # Ranges are Go2's; each robot gets them scaled by its speed scale.
+    self.vel_command_b[env_ids, :2] *= get_morph_scales(self._env).speed[env_ids, None]
     if self.cfg.heading_command:
       assert self.cfg.ranges.heading is not None
       self.heading_target[env_ids] = r.uniform_(*self.cfg.ranges.heading)

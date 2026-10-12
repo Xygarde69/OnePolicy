@@ -85,8 +85,8 @@ class PlayConfig:
   """Default joint pose: the training pose fitted into the robot's joint ranges
   ("train"), the XML's first keyframe ("keyframe"), or keyframe if the XML has
   one, else train ("auto")."""
-  scale_actuators_by_mass: bool = True
-  """Scale Go2 PD gains / effort limits by robot mass, as in training."""
+  scale_actuators: bool = True
+  """Scale Go2 PD gains / effort limits to the robot's size, as in training."""
   device: str | None = None
   video: bool = False
   video_length: int = 200
@@ -198,9 +198,7 @@ def run_play(cfg: PlayConfig):
   agent_cfg = morph_quadruped_ppo_runner_cfg()
   env_cfg.scene.num_envs = 1
   set_morphologies(env_cfg, robot_dir, pose)
-  env_cfg.events["morphology"].params["scale_actuators_by_mass"] = (
-    cfg.scale_actuators_by_mass
-  )
+  env_cfg.events["morphology"].params["scale_actuators"] = cfg.scale_actuators
 
   DUMMY_MODE = cfg.agent in {"zero", "random"}
   TRAINED_MODE = not DUMMY_MODE

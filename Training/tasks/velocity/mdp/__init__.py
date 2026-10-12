@@ -6,3 +6,4 @@ from .rewards import *  # noqa: F403
 from .terminations import *  # noqa: F403
 from .velocity_command import *  # noqa: F403
 from .morphology import *  # noqa: F403
+from .scaling import *  # noqa: F403

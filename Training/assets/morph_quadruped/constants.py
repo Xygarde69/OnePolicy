@@ -12,7 +12,7 @@ from pathlib import Path
 import mujoco
 
 from generation.mjcf_builder import mesh_assets
-from mjlab.actuator import BuiltinPositionActuatorCfg
+from mjlab.actuator import DcMotorActuatorCfg
 from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
 from mjlab.utils.spec_config import CollisionCfg
 
@@ -38,35 +38,53 @@ def get_spec(xml_path: str) -> mujoco.MjSpec:
 # Actuator config (Go2 values).
 ##
 
-# Go2 total mass [kg]. Each robot's gains and effort limits are scaled by
-# its_mass / NOMINAL_MASS (GenLoco scales its PD gains by mass the same way).
+# Go2 reference anatomy. Every Go2-tuned threshold (rewards, terminations,
+# commands, randomisation) and the actuators below are rescaled per robot by
+# its size relative to these (see tasks/velocity/mdp/scaling.py).
 NOMINAL_MASS = 15.206
+"""Go2 total mass [kg]."""
+NOMINAL_LEG_LENGTH = 0.426
+"""Go2 thigh joint -> knee -> foot centre [m] (0.213 + 0.213)."""
+NOMINAL_FOOT_RADIUS = 0.022
+"""Go2 foot sphere radius [m]."""
 
-MORPH_ACTUATOR_HIP = BuiltinPositionActuatorCfg(
+# DC motors rather than MuJoCo position actuators, so that each robot's joint
+# velocity limit (create_robot's maxJointVelocity) holds: torque falls linearly
+# from effort_limit at rest to zero at velocity_limit. The `morphology` startup
+# event overwrites velocity_limit with each robot's own value.
+PLACEHOLDER_VELOCITY_LIMIT = 30.0
+
+MORPH_ACTUATOR_HIP = DcMotorActuatorCfg(
   target_names_expr=(
     ".*hip_.*",
   ),
   stiffness=20.0,
   damping=1.0,
   effort_limit=23.5,
+  saturation_effort=23.5,
+  velocity_limit=PLACEHOLDER_VELOCITY_LIMIT,
   armature=0.01,
 )
-MORPH_ACTUATOR_THIGH = BuiltinPositionActuatorCfg(
+MORPH_ACTUATOR_THIGH = DcMotorActuatorCfg(
   target_names_expr=(
     ".*thigh_.*",
   ),
   stiffness=20.0,
   damping=1.0,
   effort_limit=23.5,
+  saturation_effort=23.5,
+  velocity_limit=PLACEHOLDER_VELOCITY_LIMIT,
   armature=0.01,
 )
-MORPH_ACTUATOR_CALF = BuiltinPositionActuatorCfg(
+MORPH_ACTUATOR_CALF = DcMotorActuatorCfg(
   target_names_expr=(
     ".*calf_.*",
   ),
   stiffness=40.0,
   damping=2.0,
   effort_limit=45,
+  saturation_effort=45,
+  velocity_limit=PLACEHOLDER_VELOCITY_LIMIT,
   armature=0.02,
 )
 

@@ -251,8 +251,15 @@ def mesh_assets() -> dict[str, bytes]:
   }
 
 
-def make_robot_xml(seed: int, delta_scale: float = 1.0) -> tuple[str, float]:
-  """Generate one random quadruped. Returns (MJCF string, total mass [kg])."""
+def make_robot_xml(seed: int, delta_scale: float = 1.0) -> tuple[str, float, float]:
+  """Generate one random quadruped.
+
+  Returns (MJCF string, total mass [kg], max joint velocity [rad/s]). MJCF has
+  no joint velocity limit, so the velocity create_robot gives every revolute
+  joint (PyBullet maxJointVelocity) is returned for the actuators to enforce.
+  """
   rec, dynamics = generate_morphology(seed, delta_scale)
   total_mass = float(sum(d[0] for d in dynamics.values()))
-  return ET.tostring(build_mjcf(rec, dynamics, seed), encoding="unicode"), total_mass
+  max_joint_velocity = float(max(rec.max_joint_velocities.values()))
+  xml = ET.tostring(build_mjcf(rec, dynamics, seed), encoding="unicode")
+  return xml, total_mass, max_joint_velocity

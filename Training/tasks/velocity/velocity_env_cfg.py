@@ -23,14 +23,13 @@ from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
 from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
-from mjlab.tasks.velocity import mdp
-from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.terrains.config import ROUGH_TERRAINS_CFG
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
 import tasks.velocity.mdp as mdp
+from tasks.velocity.mdp import UniformVelocityCommandCfg
 
 
 def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
@@ -207,7 +206,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "push_robot": EventTermCfg(
-      func=mdp.push_by_setting_velocity,
+      # Linear velocities are Go2's, scaled per robot.
+      func=mdp.scaled_push_by_setting_velocity,
       mode="interval",
       interval_range_s=(5.0, 6.0),
       params={
@@ -241,10 +241,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "base_com": EventTermCfg(
       mode="startup",
-      func=dr.body_com_offset,
+      # Offsets are Go2's [m], scaled per robot by leg length.
+      func=mdp.scaled_body_com_offset,
       params={
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
-        "operation": "add",
         "ranges": {
           0: (-0.05, 0.05),
           1: (-0.05, 0.05),

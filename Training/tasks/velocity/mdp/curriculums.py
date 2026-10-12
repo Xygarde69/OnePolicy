@@ -7,6 +7,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 
+from .scaling import get_morph_scales
 from .velocity_command import UniformVelocityCommandCfg
 
 if TYPE_CHECKING:
@@ -48,8 +49,10 @@ def terrain_levels_vel(
     asset.data.root_link_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1
   )
 
-  # Robots that walked far enough progress to harder terrains.
-  move_up = distance > terrain_generator.size[0] / 2
+  # Robots that walked far enough progress to harder terrains. The distance is
+  # Go2's, scaled by each robot's speed scale (its commands are scaled alike).
+  speed = get_morph_scales(env).speed[env_ids]
+  move_up = distance > terrain_generator.size[0] / 2 * speed
 
   # Robots that walked less than half of their required distance go to simpler
   # terrains.

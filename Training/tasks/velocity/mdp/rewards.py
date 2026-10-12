@@ -13,6 +13,10 @@ from mjlab.utils.lab_api.string import (
   resolve_matching_names_values,
 )
 
+from assets.morph_quadruped.constants import NOMINAL_FOOT_RADIUS
+
+from .scaling import get_morph_scales, normalized_command
+
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
@@ -28,7 +32,8 @@ def track_linear_velocity(
 ) -> torch.Tensor:
   """Reward for tracking the commanded base linear velocity.
 
-  The commanded z velocity is assumed to be zero.
+  The commanded z velocity is assumed to be zero. `std` is Go2's [m/s],
+  scaled by each robot's speed scale.
   """
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
@@ -37,6 +42,7 @@ def track_linear_velocity(
   xy_error = torch.sum(torch.square(command[:, :2] - actual[:, :2]), dim=1)
   z_error = torch.square(actual[:, 2])
   lin_vel_error = xy_error + (2 * z_error)
+  std = std * get_morph_scales(env).speed
   return torch.exp(-lin_vel_error / std**2)
 
 
@@ -122,13 +128,18 @@ def angular_momentum_penalty(
   env: ManagerBasedRlEnv,
   sensor_name: str,
 ) -> torch.Tensor:
-  """Penalize whole-body angular momentum to encourage natural arm swing."""
+  """Penalize whole-body angular momentum to encourage natural arm swing.
+
+  Normalized to Go2 by s_m * s_L^1.5 (inertia s_m * s_L^2 times Froude
+  angular velocity s_L^-0.5). The logged metric is the raw magnitude.
+  """
   angmom_sensor: BuiltinSensor = env.scene[sensor_name]
   angmom = angmom_sensor.data
   angmom_magnitude_sq = torch.sum(torch.square(angmom), dim=-1)
   angmom_magnitude = torch.sqrt(angmom_magnitude_sq)
   env.extras["log"]["Metrics/angular_momentum_mean"] = torch.mean(angmom_magnitude)
-  return angmom_magnitude_sq
+  scales = get_morph_scales(env)
+  return angmom_magnitude_sq / (scales.mass * scales.length**1.5) ** 2
 
 
 def feet_air_time(
@@ -138,7 +149,8 @@ def feet_air_time(
   command_name: str | None = None,
   command_threshold: float = 0.1,
 ) -> torch.Tensor:
-  """Reward feet air time."""
+  """Reward feet air time. `threshold` is Go2's [s], scaled by the time scale."""
+  threshold = threshold * get_morph_scales(env).time
   sensor: ContactSensor = env.scene[sensor_name]
   sensor_data = sensor.data
   air_time = sensor_data.current_air_time
@@ -152,6 +164,7 @@ def feet_air_time(
   if command_name is not None:
     command = env.command_manager.get_command(command_name)
     if command is not None:
+      command = normalized_command(env, command)
       linear_norm = torch.norm(command[:, :2], dim=1)
       angular_norm = torch.abs(command[:, 2])
       total_command = linear_norm + angular_norm
@@ -167,16 +180,23 @@ def feet_clearance(
   command_threshold: float = 0.1,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Penalize deviation from target clearance height, weighted by foot velocity."""
+  """Penalize deviation from target clearance height, weighted by foot velocity.
+
+  `target_height` is Go2's foot-centre height [m]: its lift above Go2's foot
+  radius is scaled by s_L and the robot's own foot radius added back.
+  """
   asset: Entity = env.scene[asset_cfg.name]
+  scales = get_morph_scales(env)
+  target = scales.foot_radius + (target_height - NOMINAL_FOOT_RADIUS) * scales.length
   foot_z = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # [B, N]
   foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]  # [B, N, 2]
   vel_norm = torch.norm(foot_vel_xy, dim=-1)  # [B, N]
-  delta = torch.abs(foot_z - target_height)  # [B, N]
+  delta = torch.abs(foot_z - target[:, None])  # [B, N]
   cost = torch.sum(delta * vel_norm, dim=1)  # [B]
   if command_name is not None:
     command = env.command_manager.get_command(command_name)
     if command is not None:
+      command = normalized_command(env, command)
       linear_norm = torch.norm(command[:, :2], dim=1)
       angular_norm = torch.abs(command[:, 2])
       total_command = linear_norm + angular_norm
@@ -196,6 +216,8 @@ def feet_gait(
 ) -> torch.Tensor:
     sensor: ContactSensor = env.scene[sensor_name]
     is_contact = sensor.data.current_contact_time > 0
+    # `period` is Go2's [s], scaled by each robot's time scale.
+    period = period * get_morph_scales(env).time
     global_phase = ((env.episode_length_buf * env.step_dt) / period).unsqueeze(1)
     offsets = torch.as_tensor(offset, device=env.device, dtype=global_phase.dtype).view(1, -1)
     leg_phase = (global_phase + offsets) % 1.0
@@ -204,6 +226,7 @@ def feet_gait(
     if command_name is not None:
         command = env.command_manager.get_command(command_name)
         if command is not None:
+            command = normalized_command(env, command)
             linear_norm = torch.norm(command[:, :2], dim=1)
             angular_norm = torch.abs(command[:, 2])
             total_command = linear_norm + angular_norm
@@ -244,11 +267,15 @@ class feet_swing_height:
       self.peak_heights,
     )
     first_contact = contact_sensor.compute_first_contact(dt=self.step_dt)
+    command = normalized_command(env, command)
     linear_norm = torch.norm(command[:, :2], dim=1)
     angular_norm = torch.abs(command[:, 2])
     total_command = linear_norm + angular_norm
     active = (total_command > command_threshold).float()
-    error = self.peak_heights / target_height - 1.0
+    # Go2's target, rescaled as in feet_clearance.
+    scales = get_morph_scales(env)
+    target = scales.foot_radius + (target_height - NOMINAL_FOOT_RADIUS) * scales.length
+    error = self.peak_heights / target[:, None] - 1.0
     cost = torch.sum(torch.square(error) * first_contact.float(), dim=1) * active
     num_landings = torch.sum(first_contact.float())
     peak_heights_at_landing = self.peak_heights * first_contact.float()
@@ -271,11 +298,15 @@ def feet_slip(
   command_threshold: float = 0.01,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Penalize foot sliding (xy velocity while in contact)."""
+  """Penalize foot sliding (xy velocity while in contact).
+
+  Speed squared scales with s_L, so the cost is divided by it.
+  """
   asset: Entity = env.scene[asset_cfg.name]
   contact_sensor: ContactSensor = env.scene[sensor_name]
   command = env.command_manager.get_command(command_name)
   assert command is not None
+  command = normalized_command(env, command)
   linear_norm = torch.norm(command[:, :2], dim=1)
   angular_norm = torch.abs(command[:, 2])
   total_command = linear_norm + angular_norm
@@ -286,6 +317,7 @@ def feet_slip(
   vel_xy_norm = torch.norm(foot_vel_xy, dim=-1)  # [B, N]
   vel_xy_norm_sq = torch.square(vel_xy_norm)  # [B, N]
   cost = torch.sum(vel_xy_norm_sq * in_contact, dim=1) * active
+  cost = cost / get_morph_scales(env).length
   num_in_contact = torch.sum(in_contact)
   mean_slip_vel = torch.sum(vel_xy_norm * in_contact) / torch.clamp(
     num_in_contact, min=1
@@ -300,7 +332,11 @@ def soft_landing(
   command_name: str | None = None,
   command_threshold: float = 0.05,
 ) -> torch.Tensor:
-  """Penalize high impact forces at landing to encourage soft footfalls."""
+  """Penalize high impact forces at landing to encourage soft footfalls.
+
+  Forces scale with mass, so the cost is divided by s_m. The logged metric is
+  the raw force.
+  """
   contact_sensor: ContactSensor = env.scene[sensor_name]
   sensor_data = contact_sensor.data
   assert sensor_data.force is not None
@@ -312,9 +348,11 @@ def soft_landing(
   num_landings = torch.sum(first_contact.float())
   mean_landing_force = torch.sum(landing_impact) / torch.clamp(num_landings, min=1)
   env.extras["log"]["Metrics/landing_force_mean"] = mean_landing_force
+  cost = cost / get_morph_scales(env).mass
   if command_name is not None:
     command = env.command_manager.get_command(command_name)
     if command is not None:
+      command = normalized_command(env, command)
       linear_norm = torch.norm(command[:, :2], dim=1)
       angular_norm = torch.abs(command[:, 2])
       total_command = linear_norm + angular_norm
@@ -384,6 +422,7 @@ class variable_posture:
     command = env.command_manager.get_command(command_name)
     assert command is not None
 
+    command = normalized_command(env, command)
     linear_speed = torch.norm(command[:, :2], dim=1)
     angular_speed = torch.abs(command[:, 2])
     total_speed = linear_speed + angular_speed
@@ -419,6 +458,7 @@ def stand_still(
     if command_name is not None:
         command = env.command_manager.get_command(command_name)
         if command is not None:
+            command = normalized_command(env, command)
             linear_norm = torch.norm(command[:, :2], dim=1)
             angular_norm = torch.abs(command[:, 2])
             total_command = linear_norm + angular_norm

@@ -38,6 +38,10 @@ STRUCTURE_FIELDS = ("body_parentid", "body_sameframe", "body_simple", "jnt_type"
 
 BANK_FILE = "morphologies.npz"
 
+# Joint velocity limit [rad/s] for robots not made by create_robot (adapt.py):
+# the top of its max_joint_velocity_range, the fastest robots seen in training.
+DEFAULT_MAX_JOINT_VELOCITY = 6 * np.pi
+
 
 @dataclass(frozen=True)
 class MorphologyGenCfg:
@@ -84,30 +88,57 @@ def _standing_height(model: mujoco.MjModel, init_joint_pos: dict[str, float],
   return clearance - min(bottom(g) for g in feet)
 
 
+def _leg_dimensions(model: mujoco.MjModel) -> tuple[float, float]:
+  """Mean leg length (thigh joint -> knee -> foot centre) and foot radius [m].
+
+  Measured in the zero pose, so it works for any robot in the Go2 naming
+  convention (generated or adapted).
+  """
+  data = mujoco.MjData(model)
+  mujoco.mj_kinematics(model, data)
+  lengths, radii = [], []
+  for leg in ("FL", "FR", "RL", "RR"):
+    hip = data.xanchor[model.joint(f"{leg}_thigh_joint").id]
+    knee = data.xanchor[model.joint(f"{leg}_calf_joint").id]
+    g = model.geom(f"{leg}_foot_collision").id
+    lengths.append(np.linalg.norm(knee - hip) + np.linalg.norm(data.geom_xpos[g] - knee))
+    radii.append(model.geom_size[g][0] if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_SPHERE
+                 else model.geom_rbound[g])
+  return float(np.mean(lengths)), float(np.mean(radii))
+
+
 def _extract(model: mujoco.MjModel, init_joint_pos: dict[str, float],
              clearance: float):
-  """Per-env fields, structure fields and spawn height of one compiled robot."""
+  """Per-env fields, structure fields and per-robot scalars of one compiled robot."""
   fields = {f: getattr(model, f)[1:] if f in BODY_FIELDS else getattr(model, f)
             for f in MORPHOLOGY_FIELDS}
   structure = {f: getattr(model, f).copy() for f in STRUCTURE_FIELDS}
-  return fields, structure, _standing_height(model, init_joint_pos, clearance)
+  leg_length, foot_radius = _leg_dimensions(model)
+  scalars = {
+    "root_height": _standing_height(model, init_joint_pos, clearance),
+    "leg_length": leg_length,
+    "foot_radius": foot_radius,
+  }
+  return fields, structure, scalars
 
 
 def _make_one(args):
   seed, delta_scale, init_joint_pos, clearance = args
-  xml, total_mass = make_robot_xml(seed, delta_scale)
-  fields, structure, height = _extract(_compile(xml), init_joint_pos, clearance)
-  return seed, xml, total_mass, height, fields, structure
+  xml, total_mass, max_vel = make_robot_xml(seed, delta_scale)
+  fields, structure, scalars = _extract(_compile(xml), init_joint_pos, clearance)
+  scalars.update(total_mass=total_mass, max_joint_velocity=max_vel)
+  return seed, xml, scalars, fields, structure
 
 
-def _save_bank(out_dir: Path, reference: mujoco.MjModel, seeds, masses, heights,
-               fields) -> Path:
+def _save_bank(out_dir: Path, reference: mujoco.MjModel, seeds,
+               scalars: dict[str, list], fields) -> Path:
+  """`scalars`: total_mass, max_joint_velocity, root_height, leg_length,
+  foot_radius, one value per robot."""
   bank_path = out_dir / BANK_FILE
   np.savez(
     bank_path,
     seeds=np.array(seeds),
-    total_mass=np.array(masses),
-    root_height=np.array(heights),
+    **{k: np.array(v) for k, v in scalars.items()},
     body_names=np.array(_names(reference, mujoco.mjtObj.mjOBJ_BODY, reference.nbody)[1:]),
     geom_names=np.array(_names(reference, mujoco.mjtObj.mjOBJ_GEOM, reference.ngeom)),
     site_names=np.array(_names(reference, mujoco.mjtObj.mjOBJ_SITE, reference.nsite)),
@@ -118,7 +149,8 @@ def _save_bank(out_dir: Path, reference: mujoco.MjModel, seeds, masses, heights,
 
 def single_robot_bank(xml: str, assets: dict[str, bytes], out_dir: Path,
                       init_joint_pos: dict[str, float],
-                      clearance: float = 0.02) -> Path:
+                      clearance: float = 0.02,
+                      max_joint_velocity: float = DEFAULT_MAX_JOINT_VELOCITY) -> Path:
   """Bank holding one existing robot (see adapt.py), for play.
 
   `assets` are written under the MJCF's meshdir, next to env_00000.xml.
@@ -132,8 +164,10 @@ def single_robot_bank(xml: str, assets: dict[str, bytes], out_dir: Path,
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
   model = mujoco.MjModel.from_xml_path(str(xml_path))
-  fields, _, height = _extract(model, init_joint_pos, clearance)
-  return _save_bank(out_dir, model, [-1], [model.body_subtreemass[1]], [height],
+  fields, _, scalars = _extract(model, init_joint_pos, clearance)
+  scalars.update(total_mass=model.body_subtreemass[1],
+                 max_joint_velocity=max_joint_velocity)
+  return _save_bank(out_dir, model, [-1], {k: [v] for k, v in scalars.items()},
                     {f: [v] for f, v in fields.items()})
 
 
@@ -159,10 +193,11 @@ def generate_bank(num_envs: int, out_dir: Path, cfg: MorphologyGenCfg,
     results = pool.map(_make_one, jobs, chunksize=max(1, num_envs // (workers * 8)))
 
   reference = None
-  seeds, masses, heights = [], [], []
+  seeds = []
+  scalars: dict[str, list] = {}
   fields = {f: [] for f in MORPHOLOGY_FIELDS}
   ref_structure = None
-  for i, (seed, xml, total_mass, height, env_fields, structure) in enumerate(results):
+  for i, (seed, xml, env_scalars, env_fields, structure) in enumerate(results):
     if ref_structure is None:
       ref_structure = structure
       reference = _compile(xml)
@@ -173,8 +208,8 @@ def generate_bank(num_envs: int, out_dir: Path, cfg: MorphologyGenCfg,
           "all envs must share one model structure.")
     (out_dir / f"env_{i:05d}.xml").write_text(xml)
     seeds.append(seed)
-    masses.append(total_mass)
-    heights.append(height)
+    for k, v in env_scalars.items():
+      scalars.setdefault(k, []).append(v)
     for f in MORPHOLOGY_FIELDS:
       fields[f].append(env_fields[f])
     if (i + 1) % 1024 == 0 or i + 1 == num_envs:
@@ -182,9 +217,14 @@ def generate_bank(num_envs: int, out_dir: Path, cfg: MorphologyGenCfg,
   if workers > 1 and num_envs > 1:
     pool.shutdown()
 
-  bank_path = _save_bank(out_dir, reference, seeds, masses, heights, fields)
-  masses = np.array(masses)
+  bank_path = _save_bank(out_dir, reference, seeds, scalars, fields)
+
+  def span(key: str, fmt: str) -> str:
+    return f"{min(scalars[key]):{fmt}}-{max(scalars[key]):{fmt}}"
+
   print(f"[INFO] Wrote {num_envs} robots to {out_dir} "
-        f"(mass {masses.min():.1f}-{masses.max():.1f} kg, "
-        f"spawn height {min(heights):.2f}-{max(heights):.2f} m)", flush=True)
+        f"(mass {span('total_mass', '.1f')} kg, "
+        f"leg length {span('leg_length', '.2f')} m, "
+        f"max joint velocity {span('max_joint_velocity', '.1f')} rad/s, "
+        f"spawn height {span('root_height', '.2f')} m)", flush=True)
   return bank_path

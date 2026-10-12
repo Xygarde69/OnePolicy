@@ -8,7 +8,11 @@ from typing import Literal
 
 from pathlib import Path
 
-from assets.morph_quadruped.constants import NOMINAL_MASS, get_morph_robot_cfg
+from assets.morph_quadruped.constants import (
+  NOMINAL_LEG_LENGTH,
+  NOMINAL_MASS,
+  get_morph_robot_cfg,
+)
 from generation.bank import BANK_FILE
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
@@ -16,10 +20,9 @@ from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import TerminationTermCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
-from mjlab.tasks.velocity import mdp
-from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 
 import tasks.velocity.mdp as morph_mdp
+from tasks.velocity.mdp import UniformVelocityCommandCfg
 from tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
 TerrainType = Literal["rough", "obstacles"]
@@ -41,7 +44,11 @@ def morph_quadruped_rough_env_cfg(
     "morphology": EventTermCfg(
       func=morph_mdp.apply_morphologies,
       mode="startup",
-      params={"bank_file": "", "nominal_mass": NOMINAL_MASS},
+      params={
+        "bank_file": "",
+        "nominal_mass": NOMINAL_MASS,
+        "nominal_leg_length": NOMINAL_LEG_LENGTH,
+      },
     ),
     **cfg.events,
   }
@@ -123,8 +130,9 @@ def morph_quadruped_rough_env_cfg(
   cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names
   cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
 
+  # Go2's threshold [N], scaled per robot by mass.
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
-    func=mdp.illegal_contact,
+    func=morph_mdp.illegal_contact,
     params={"sensor_name": nonfoot_ground_cfg.name, "force_threshold": 10.0},
   )
 

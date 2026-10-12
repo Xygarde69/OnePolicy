@@ -8,6 +8,8 @@ from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactSensor
 
+from .scaling import get_morph_scales, normalized_command
+
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
@@ -45,11 +47,14 @@ def foot_contact_forces(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tenso
 
 
 def phase(env: ManagerBasedRlEnv, period: float, command_name: str) -> torch.Tensor:
+    """Gait clock. `period` is Go2's [s], scaled by each robot's time scale."""
+    period = period * get_morph_scales(env).time
     global_phase = (env.episode_length_buf * env.step_dt) % period / period
     phase = torch.zeros(env.num_envs, 2, device=env.device)
     phase[:, 0] = torch.sin(global_phase * torch.pi * 2.0)
     phase[:, 1] = torch.cos(global_phase * torch.pi * 2.0)
-    stand_mask = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1) < 0.1
+    command = normalized_command(env, env.command_manager.get_command(command_name))
+    stand_mask = torch.linalg.norm(command, dim=1) < 0.1
     phase = torch.where(stand_mask.unsqueeze(1), torch.zeros_like(phase), phase)
     return phase
 

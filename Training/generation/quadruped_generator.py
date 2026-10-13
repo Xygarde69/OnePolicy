@@ -1,31 +1,33 @@
 import numpy as np
 from numpy.random import uniform, normal
 
-a1_base = np.array([0.1335, 0.097, 0.057])
-base_delta = np.array([0.045, 0.03, 0.02])
-base_delta = a1_base / 2
+# Nominal values are Unitree Go2's (mujoco_menagerie go2.xml; foot mass from
+# Unitree's go2 URDF); each robot is sampled around them.
+go2_base = np.array([0.1881, 0.04675, 0.057])  # trunk collision box half-extents [m]
+base_delta = go2_base / 2
 
-a1_base_mass = 4.713
-a1_density = a1_base_mass / np.prod(a1_base)
-density_delta = a1_density / 2
+go2_base_mass = 6.921
+go2_density = go2_base_mass / np.prod(go2_base)
+density_delta = go2_density / 2
 
+# per leg: hip, hip_fixed, thigh, calf, foot
 link_masses = np.array([0.001,
-              0.696, 0.001, 1.013, 0.166, 0.06,
-              0.696, 0.001, 1.013, 0.166, 0.06,
-              0.696, 0.001, 1.013, 0.166, 0.06,
-              0.696, 0.001, 1.013, 0.166, 0.06])
+              0.678, 0.001, 1.152, 0.241352, 0.04,
+              0.678, 0.001, 1.152, 0.241352, 0.04,
+              0.678, 0.001, 1.152, 0.241352, 0.04,
+              0.678, 0.001, 1.152, 0.241352, 0.04])
 link_masses_delta = link_masses / 2
 
-a1_cylinder = np.array([0.02, 0.22]) #radius, length
-cyl_delta = np.array([0.0025, 0.025])
-cyl_delta = a1_cylinder / 2
+# radius, length: thigh/calf length 0.213 m; foot sphere radius (1.5 * radius) 0.022 m
+go2_cylinder = np.array([0.022 / 1.5, 0.213])
+cyl_delta = go2_cylinder / 2
 
 # base_delta *= 0
 # density_delta *= 0
 # link_masses_delta *= 0
 # cyl_delta *= 0
 
-a1_hip_link_length = 0.08100000023841858  # A1 hip link length (hip joint -> thigh joint)
+go2_hip_link_length = 0.0955  # Go2 hip link length (hip joint -> thigh joint)
 hip_link_length_range = (0.01, 0.5)  # min, max [m]
 hip_link_length_std = 0.05  # [m]
 
@@ -55,16 +57,16 @@ def create_robot(p,
     randomized_scale = 1
     randomized_scale = uniform(0.8, 1.2)
 
-    x_base, y_base, z_base = uniform(a1_base - base_delta_cur, a1_base + base_delta_cur) * randomized_scale
+    x_base, y_base, z_base = uniform(go2_base - base_delta_cur, go2_base + base_delta_cur) * randomized_scale
 
-    lower_cylinder_radius, lower_cylinder_length = uniform(a1_cylinder - cyl_delta_cur, a1_cylinder + cyl_delta_cur) * randomized_scale
-    # upper_cylinder_radius, upper_cylinder_length = uniform(a1_cylinder - cyl_delta_cur, a1_cylinder + cyl_delta_cur)
+    lower_cylinder_radius, lower_cylinder_length = uniform(go2_cylinder - cyl_delta_cur, go2_cylinder + cyl_delta_cur) * randomized_scale
+    # upper_cylinder_radius, upper_cylinder_length = uniform(go2_cylinder - cyl_delta_cur, go2_cylinder + cyl_delta_cur)
     upper_cylinder_radius = lower_cylinder_radius * uniform(0.75, 1.25)
     upper_cylinder_length = lower_cylinder_length * uniform(0.75, 1.25)
 
     linkMasses = uniform(link_masses - link_masses_delta_cur, link_masses + link_masses_delta_cur) * (randomized_scale**3)
 
-    baseDensity = uniform(a1_density - density_delta_cur, a1_density + density_delta_cur)
+    baseDensity = uniform(go2_density - density_delta_cur, go2_density + density_delta_cur)
     baseMass = baseDensity * x_base * y_base * z_base
 
     baseCollisionShapeIndex = p.createCollisionShape(
@@ -515,27 +517,27 @@ def create_robot(p,
 
     # 0.18299999833106995, 0.04699999839067459 - randomize x and y
     # uniform(0.05, 0.25, size=1)
-    hip_joint_link_pos_1, hip_joint_link_pos_2 = 0.18299999833106995, 0.04699999839067459
-    # hip_joint_link_pos_1 += (x_base - a1_base[0]) / 2
-    # hip_joint_link_pos_2 += (y_base - a1_base[1]) / 2
-    hip_joint_link_pos_1 *= x_base / a1_base[0] * uniform(0.9, 1.1)
-    hip_joint_link_pos_2 *= y_base / a1_base[1] * uniform(0.9, 1.1)
+    hip_joint_link_pos_1, hip_joint_link_pos_2 = 0.1934, 0.0465  # Go2 hip joint offset from the base centre
+    # hip_joint_link_pos_1 += (x_base - go2_base[0]) / 2
+    # hip_joint_link_pos_2 += (y_base - go2_base[1]) / 2
+    hip_joint_link_pos_1 *= x_base / go2_base[0] * uniform(0.9, 1.1)
+    hip_joint_link_pos_2 *= y_base / go2_base[1] * uniform(0.9, 1.1)
 
     # hip link: thigh joint sits beside the hip joint, along the thigh joint axis (y), parallel to the ground
-    hip_link_length = truncated_normal(a1_hip_link_length, hip_link_length_std, *hip_link_length_range)
-    # hip_fixed_link_pos += (y_base - a1_base[1]) / 2
-    # hip_fixed_link_pos *= y_base / a1_base[1] * y_r
+    hip_link_length = truncated_normal(go2_hip_link_length, hip_link_length_std, *hip_link_length_range)
+    # hip_fixed_link_pos += (y_base - go2_base[1]) / 2
+    # hip_fixed_link_pos *= y_base / go2_base[1] * y_r
 
     # 0.08505000174045563- randomize y
     # upper_joint_link_pos = upper_cylinder_length / 2
     # 0.20000000298023224 - randomize z
     # lower_joint_link_pos = lower_cylinder_length / 2
-    # lower_joint_link_pos *= upper_cylinder_length / a1_cylinder[1]
-    # lower_joint_link_pos += (upper_cylinder_length - a1_cylinder[1]) / 2
+    # lower_joint_link_pos *= upper_cylinder_length / go2_cylinder[1]
+    # lower_joint_link_pos += (upper_cylinder_length - go2_cylinder[1]) / 2
     # 0.19999998807907104 - randomize z
     # toe_fixed_link_pos = 0.19999998807907104 / 2
-    # toe_fixed_link_pos *= lower_cylinder_length / a1_cylinder[1]
-    # toe_fixed_link_pos += (lower_cylinder_length - a1_cylinder[1]) / 2
+    # toe_fixed_link_pos *= lower_cylinder_length / go2_cylinder[1]
+    # toe_fixed_link_pos += (lower_cylinder_length - go2_cylinder[1]) / 2
 
     linkPositions = [(0.0, 0.0, 0.0),
                      (hip_joint_link_pos_1, -hip_joint_link_pos_2, 0.0),

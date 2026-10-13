@@ -3,7 +3,23 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-12  --generalise trains on the real robots' own models, not proxies
+2026-10-13  Generated robots are sampled around Go2, not A1
+  - generation/quadruped_generator.py: the nominal values every robot is
+    randomised around are now Unitree Go2's (mujoco_menagerie go2.xml, foot
+    mass from Unitree's URDF): trunk half-extents 0.1881 x 0.04675 x 0.057 m
+    and mass 6.921 kg (density from those), hip 0.678 / thigh 1.152 / calf
+    0.241 / foot 0.04 kg, thigh and calf 0.213 m, foot radius 0.022 m, hip
+    joint offset (0.1934, 0.0465) m, hip link 0.0955 m. Spreads (+-50%, scale
+    0.8-1.2, etc.) unchanged. a1_* names renamed go2_*.
+  - Not changed: joint ranges (GenLoco's, in mjcf_builder.py), inertial frame
+    offsets and the A1 visual meshes.
+  - Why: every threshold and reward is in Go2 units (scaling.py), so the
+    generated distribution should be centred on Go2 (s_L, s_m ~ 1).
+  - Checked: 300 seeds, leg length p5/p50/p95 0.23/0.44/0.67 m (was
+    0.24/0.45/0.69), mass 7.0/13.8/29.5 kg (was 6.0/11.4/22.6); Go2 is about
+    0.43 m and 15 kg. train_test.py smoke test (2 robots) runs, no NaNs.
+
+2026-10-12  --generalise trains on the real robots' own models, not proxies (0e50c4f)
   - Each --generalise-robots robot gets its own batched sim built from its own
     MJCF, adapted exactly as play.py does (catalog.real_robot_bank: N copies
     of the adapted robot, labelled with its name). The generated robots keep

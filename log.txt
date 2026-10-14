@@ -3,7 +3,29 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-14  Robots 1/4-4x Go2, all-uniform ranges, ">>" and "><" knees 50/50
+2026-10-14  Bug: actuator_headroom blew up the value loss; cap each excess at 1
+  - Symptom (run 2026-10-14_13-12-39, 4096 envs, commit 4439f7e): learning
+    until ~iteration 200 (mean reward 24, ~800-step episodes), then
+    Episode_Reward/actuator_headroom -1e15 .. -6e19, Loss/value inf from
+    iteration 354, surrogate loss 0, action std 0.6 -> 312, learning rate
+    pinned at 0.01, episodes ~14 steps (instant falls), action_rate /
+    action_acc penalties in the thousands (actions are noise). Dead from 354.
+  - Cause: rewards.py actuator_headroom divides the requested torque by the
+    torque the DC-motor band still gives at the joint's speed, clamped to
+    1e-6 N m. Past the no-load speed that is ~0, so the ratio is ~1e8 and
+    its square ~1e15 per joint and step. Not new: every long run since the
+    term was added had spikes (headroom min -7e9 .. -4e11, value loss max
+    1e21 .. 1e24, runs 2026-10-12_16-01-55 to 2026-10-14_12-13-46); the
+    1/4-4x size range made them constant (already -3.9e10 at iteration 0).
+  - Fix: each torque and speed excess over its margin is clamped to [0, 1]
+    before squaring, so the term is at most 1 per joint and ratio (24 per
+    step), like nonfoot_contact. Unchanged below the cap.
+  - Checked: diagnosis from the TensorBoard scalars of the failed run and the
+    seven runs before it. Verification run (4096 envs, same robot seed
+    880288390, 450 iterations, past the failure at 354) in progress; result
+    in the next entry.
+
+2026-10-14  Robots 1/4-4x Go2, all-uniform ranges, ">>" and "><" knees 50/50 (4439f7e)
   - quadruped_generator.py: overall scale log-uniform in [1/4, 4] x Go2
     (was uniform 0.8-1.2), so Go2 stays the median and 2x is as likely as
     0.5x. Hip link length uniform Go2 +-50 % x scale (was a truncated normal,

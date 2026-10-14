@@ -560,7 +560,9 @@ def actuator_headroom(
   the motor's speed limit. Each ratio above its margin is penalized squared.
   Using the requested torque, not the clipped one, keeps commands beyond the
   band visible (arXiv 2312.17507, Sec. III-D). Ratios, so the weight holds
-  for every robot.
+  for every robot. Each excess is capped at 1 (cost <= 1 per joint and
+  ratio): past the no-load speed the band gives ~0 torque, and the uncapped
+  ratio (~1e8) blew the value loss up to inf.
   """
   asset: Entity = env.scene[asset_cfg.name]
   cost = torch.zeros(env.num_envs, device=env.device)
@@ -578,8 +580,8 @@ def actuator_headroom(
     available = torch.where(requested >= 0, upper, -lower).clamp(min=1e-6)
     torque_ratio = torch.abs(requested) / available
     speed_ratio = torch.abs(qd) / v_lim
-    cost += torch.sum(torch.square(torch.clamp(torque_ratio - torque_margin, min=0.0)), dim=1)
-    cost += torch.sum(torch.square(torch.clamp(speed_ratio - velocity_margin, min=0.0)), dim=1)
+    cost += torch.sum(torch.square(torch.clamp(torque_ratio - torque_margin, 0.0, 1.0)), dim=1)
+    cost += torch.sum(torch.square(torch.clamp(speed_ratio - velocity_margin, 0.0, 1.0)), dim=1)
   return cost
 
 

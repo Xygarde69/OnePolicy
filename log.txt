@@ -3,7 +3,39 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-14  Per-link inertia randomisation; README randomisation section
+2026-10-14  Robots 1/4-4x Go2, all-uniform ranges, ">>" and "><" knees 50/50
+  - quadruped_generator.py: overall scale log-uniform in [1/4, 4] x Go2
+    (was uniform 0.8-1.2), so Go2 stays the median and 2x is as likely as
+    0.5x. Hip link length uniform Go2 +-50 % x scale (was a truncated normal,
+    not scaled); no normal distributions are left. Max joint velocity
+    6 pi / sqrt(scale) (Froude), so small robots can move their legs fast
+    enough.
+  - Knee layout: ">>" (all knees backward, Go2) or "><" (rear knees forward,
+    ANYmal), drawn 50/50 per generated robot (MorphologyGenCfg /
+    --morphology.x-knee-fraction). A "><" robot gets mirrored rear thigh and
+    calf ranges, the tag "xknee" in its MJCF model name, and a default pose
+    with the rear thigh/calf negated (generation/knees.py). Real robots are
+    marked by file name: anymal_b.xml / anymal_c.xml renamed to *_xknee.xml
+    (scene.xml includes updated); catalog.default_pose then uses the "><"
+    training pose (keyframes still win). Bank scalar x_knee records it.
+  - New actor/critic observation knee_direction (sign of the default calf
+    angle per leg, 4 dims; mirror rule: swap legs). joint_pos is relative
+    to the default pose, so without it the policy can't tell ">>" from "><".
+    Actor input 47 -> 51: older checkpoints can't be resumed or played.
+  - README: randomisation table (scale, hip link, joint velocity, knees),
+    new size ranges, --morphology.x-knee-fraction, a "Knee configuration"
+    section (naming rule), ANYmal rows, observation count, old-checkpoint
+    note.
+  - Checked: 400 seeds: "><" share 0.54; in "><" robots the front knees sit
+    behind their hips and the rear knees in front (knees inward), feet under
+    the hips; adapted ANYmal B/C get the same layout (base frame). 4096
+    seeds: mass 0.2-970 kg, leg 0.07-2.1 m (p1-p99). train_test.py, 64
+    robots (0.07 m / 0.3 kg to 2.1 m / 894 kg), 5 s random actions: no NaNs
+    or crashes. train.py --num-envs 64 --generalise 0.5 --generalise-robots
+    go2 anymal_c, 2 iterations: knee_direction in both groups, symmetry OK,
+    ANYmal C on its "><" pose, checkpoint written (test run deleted).
+
+2026-10-14  Per-link inertia randomisation; README randomisation section (cbad59c)
   - generation/mjcf_builder.py (generate_morphology): every link's inertia
     from PyBullet (uniform-density solid of its shape and mass) is multiplied
     by uniform(1 - 0.3 d, 1 + 0.3 d), d = --morphology.delta-scale, one

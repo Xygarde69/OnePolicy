@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 from .adapt import AdaptedRobot, adapt_quadruped, fit_pose
+from .knees import X_KNEE_TAG, is_x_knee, x_knee_pose
 
 QUADRUPEDS_DIR = Path(__file__).resolve().parents[2] / "quadrupeds"
 
@@ -69,7 +70,8 @@ def default_pose(robot: AdaptedRobot, xml_path: Path, init_pose: str,
   """The robot's default joint pose and what was chosen, as log lines.
 
   init_pose: "keyframe" (the XML's first keyframe), "train" (`train_pose`
-  fitted into the joint ranges) or "auto" (keyframe if there is one).
+  fitted into the joint ranges) or "auto" (keyframe if there is one). A robot
+  whose file name carries X_KNEE_TAG (knees.py) gets the "><" training pose.
   """
   use_keyframe = init_pose == "keyframe" or (
     init_pose == "auto" and robot.keyframe_joint_pos is not None
@@ -88,8 +90,12 @@ def default_pose(robot: AdaptedRobot, xml_path: Path, init_pose: str,
     if init_pose == "auto":
       raise ValueError(message)
     log.append(f"WARN {message}")
+  label = "training pose"
+  if is_x_knee(xml_path.stem):
+    train_pose = x_knee_pose(train_pose)
+    label = f'"><" training pose (rear knees forward; "{X_KNEE_TAG}" in the file name)'
   pose, notes = fit_pose(resolve_pose(train_pose, robot.joint_ranges), robot.joint_ranges)
-  return pose, log + ["Default pose: training pose"] + [f"  {n}" for n in notes]
+  return pose, log + [f"Default pose: {label}"] + [f"  {n}" for n in notes]
 
 
 def real_robot_bank(name: str, copies: int, out_dir: Path,

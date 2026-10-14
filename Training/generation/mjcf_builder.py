@@ -28,6 +28,7 @@ import numpy as np
 import pybullet
 
 from . import quadruped_generator
+from .knees import X_KNEE_TAG
 
 GENERATION_DIR = os.path.dirname(os.path.abspath(__file__))
 MESH_DIR = os.path.join(GENERATION_DIR, "robot_descriptions", "a1_description", "meshes")
@@ -51,6 +52,15 @@ JOINT_RANGES = [
   (-1.0471975512, 4.18879020479),
   (-2.69653369433, -0.916297857297),
 ] * 4
+
+
+def joint_ranges(x_knee: bool) -> list[tuple[float, float]]:
+  """JOINT_RANGES in GO2_JOINT_NAMES order; for a "><" robot (knees.py) the
+  rear thigh and calf ranges are mirrored, so the rear knees bend forward."""
+  return [
+    (-hi, -lo) if x_knee and name.startswith("R") and "_hip_" not in name else (lo, hi)
+    for name, (lo, hi) in zip(GO2_JOINT_NAMES, JOINT_RANGES)
+  ]
 
 # Each link's inertia is multiplied by uniform(1 - d, 1 + d) (d scaled by
 # delta_scale), all three axes alike so it stays physically valid: mass spread
@@ -104,8 +114,9 @@ def mj_quat(xyzw):
   return (w, x, y, z)
 
 
-def generate_morphology(seed: int, delta_scale: float = 1.0):
-  """Run GenLoco's generator in headless PyBullet; return recorded data."""
+def generate_morphology(seed: int, delta_scale: float = 1.0, x_knee_fraction: float = 0.5):
+  """Run GenLoco's generator in headless PyBullet; return recorded data and
+  whether the robot is "><" (rear knees forward, probability x_knee_fraction)."""
   # create_robot draws from numpy's global RNG.
   np.random.seed(seed)
   cid = pybullet.connect(pybullet.DIRECT)
@@ -124,7 +135,8 @@ def generate_morphology(seed: int, delta_scale: float = 1.0):
   for i, dyn in dynamics.items():
     factor = np.random.uniform(1 - d, 1 + d)
     dynamics[i] = (dyn[0], dyn[1], tuple(np.asarray(dyn[2]) * factor), *dyn[3:])
-  return rec, dynamics
+  x_knee = bool(np.random.uniform() < x_knee_fraction)
+  return rec, dynamics, x_knee
 
 
 def shape_to_geom(shape, frame_prefix, length_key):
@@ -176,11 +188,13 @@ def add_geoms(body, name, rec, col_idx, vis_idx, friction):
     ET.SubElement(body, "geom", attrs)
 
 
-def build_mjcf(rec, dynamics, seed: int) -> ET.Element:
-  """Build the Go2-named MJCF robot from a recorded create_robot call."""
+def build_mjcf(rec, dynamics, seed: int, x_knee: bool = False) -> ET.Element:
+  """Build the Go2-named MJCF robot from a recorded create_robot call. A
+  "><" robot gets mirrored rear knee ranges and X_KNEE_TAG in its model name."""
   mb = rec.multibody_args
 
-  root = ET.Element("mujoco", model=f"morph_quadruped_{seed}")
+  model_name = f"morph_quadruped_{seed}" + (f"_{X_KNEE_TAG}" if x_knee else "")
+  root = ET.Element("mujoco", model=model_name)
   ET.SubElement(root, "compiler", angle="radian", inertiafromgeom="false",
                 autolimits="true")
 
@@ -204,7 +218,7 @@ def build_mjcf(rec, dynamics, seed: int) -> ET.Element:
 
   # PyBullet linkParentIndices: 0 = base, k = link k-1.
   bodies = {0: base}
-  joint_iter = iter(zip(GO2_JOINT_NAMES, JOINT_RANGES))
+  joint_iter = iter(zip(GO2_JOINT_NAMES, joint_ranges(x_knee)))
   for i, name in enumerate(GO2_BODY_NAMES):
     parent = bodies[mb["linkParentIndices"][i]]
     body = ET.SubElement(parent, "body", name=name,
@@ -261,15 +275,16 @@ def mesh_assets() -> dict[str, bytes]:
   }
 
 
-def make_robot_xml(seed: int, delta_scale: float = 1.0) -> tuple[str, float, float]:
+def make_robot_xml(seed: int, delta_scale: float = 1.0,
+                   x_knee_fraction: float = 0.5) -> tuple[str, float, float]:
   """Generate one random quadruped.
 
   Returns (MJCF string, total mass [kg], max joint velocity [rad/s]). MJCF has
   no joint velocity limit, so the velocity create_robot gives every revolute
   joint (PyBullet maxJointVelocity) is returned for the actuators to enforce.
   """
-  rec, dynamics = generate_morphology(seed, delta_scale)
+  rec, dynamics, x_knee = generate_morphology(seed, delta_scale, x_knee_fraction)
   total_mass = float(sum(d[0] for d in dynamics.values()))
   max_joint_velocity = float(max(rec.max_joint_velocities.values()))
-  xml = ET.tostring(build_mjcf(rec, dynamics, seed), encoding="unicode")
+  xml = ET.tostring(build_mjcf(rec, dynamics, seed, x_knee), encoding="unicode")
   return xml, total_mass, max_joint_velocity

@@ -186,6 +186,7 @@ $PY train.py --help                              # all --env.* / --agent.* optio
 | `--morphology.seed` | random | Base seed. Env `i` uses `seed + i` |
 | `--morphology.delta-scale` | `1.0` | Scales every randomization range (0 gives Go2-like robots) |
 | `--morphology.foot-clearance` | `0.02` | Gap between lowest foot and floor at spawn [m] |
+| `--morphology.x-knee-fraction` | `0.5` | Share of generated robots with `><` knees (rear knees forward); the rest are `>>` |
 | `--morphology.workers` | all CPUs | Processes used for generation |
 | `--agent.max-iterations` | `10001` | PPO iterations |
 | `--agent.logger` | `tensorboard` | `tensorboard` or `wandb` |
@@ -218,24 +219,28 @@ about 100 MB for 4096 envs.
 All randomization comes from GenLoco's `create_robot`
 (`generation/quadruped_generator.py`, nominal values changed from A1's to
 Unitree Go2's) plus a per-link inertia factor (`generation/mjcf_builder.py`).
-Ranges are around a Go2 and scale with `--morphology.delta-scale`:
+Every range is uniform (no normal distributions), around a Go2, and scales
+with `--morphology.delta-scale`:
 
 | Property | Randomization |
 |---|---|
-| Overall scale | uniform 0.8–1.2 (applied to body and legs) |
+| Overall scale | log-uniform ¼–4 × Go2 (as likely 2× as ½×; Go2 is the median). All lengths × scale, masses × scale³ |
 | Body box (length, width, height) | Go2 dimensions ± 50 % |
 | Body density → body mass | Go2 density ± 50 % |
 | Lower leg (radius, length) | Go2 values ± 50 % (0.213 m long, foot radius 0.022 m) |
 | Upper leg | lower leg × uniform 0.75–1.25 |
 | Hip offset from body centre | scales with body size × 0.9–1.1 |
-| Hip link length | truncated normal (mean 0.0955 m, std 0.05, 0.01–0.5 m) |
+| Hip link length | Go2's 0.0955 m ± 50 % (uniform), × scale |
 | Link masses | Go2 masses ± 50 %, × scale³ |
 | Link inertia | PyBullet's uniform-density inertia of the link's shape and mass, × uniform 0.7–1.3 per link (same factor on all three axes: mass closer to or further from the COM) |
-| Max joint velocity | uniform π–6π rad/s (recorded, not enforced, see limitations) |
+| Max joint velocity | 6π rad/s / √scale (Froude: angular rates ~ 1/√size) |
+| Knee configuration | `>>` (all knees bend backward, Go2) or `><` (rear knees bend forward, ANYmal), 50/50 (`--morphology.x-knee-fraction`). Not scaled by delta-scale. See [Knee configuration](#knee-configuration--and-) |
 
-With 4096 robots this gives total masses of about 6–39 kg (p1–p99; 4.5–55 kg
-extremes) and leg lengths of about 0.23–0.67 m (p5–p95; Go2 ~0.43 m). Link
-centre-of-mass offsets are fixed (GenLoco's A1 values), not randomized. Each robot's spawn height is computed from its
+With 4096 robots this gives total masses of about 0.2–970 kg (p1–p99, median
+13 kg; Go2 ~15 kg) and leg lengths of about 0.07–2.1 m (p1–p99, median 0.39 m;
+Go2 ~0.43 m). The per-part ±50 % ranges come on top of the overall scale, so
+the extremes reach past ¼–4×. Link centre-of-mass offsets are fixed (GenLoco's
+A1 values), not randomized. Each robot's spawn height is computed from its
 own legs so that it starts just above the ground.
 
 On top of the morphology, the Go2 task's domain randomization still applies:
@@ -265,9 +270,10 @@ robots and Go2.
 - **Default pose:** hips ±0.1, thighs 0.9, calves −1.8 rad.
 - **Control:** 50 Hz policy (0.005 s physics step × decimation 4), actions are
   joint position offsets × 0.25 around the default pose.
-- **Actor observations (47):** base angular velocity, projected gravity,
-  velocity command, gait phase, joint positions, joint velocities, last
-  action. The critic also gets base linear velocity, foot heights, air time,
+- **Actor observations (51):** base angular velocity, projected gravity,
+  velocity command, gait phase, joint positions, joint velocities, knee
+  direction (per leg ±1: which way the knee bends, from the default pose),
+  last action. The critic also gets base linear velocity, foot heights, air time,
   contacts and contact forces.
 - **Rewards:** velocity tracking (linear and yaw), posture, trot gait
   (FR/RL vs FL/RR), foot clearance (0.10 m), foot slip, soft landing, body
@@ -387,8 +393,8 @@ how far training has progressed.
 | Unitree Go1 | ✅ runs | keyframe pose |
 | Unitree A1 | ✅ runs | keyframe pose |
 | Boston Dynamics Spot | ✅ runs | keyframe pose, 50 kg → gains × 3.3 |
-| ANYbotics ANYmal B | ✅ runs | no keyframe → training pose (unlimited joints) |
-| ANYbotics ANYmal C | ✅ runs | no keyframe → training pose |
+| ANYbotics ANYmal B | ✅ runs | `anymal_b_xknee.xml`: no keyframe → `><` training pose (unlimited joints) |
+| ANYbotics ANYmal C | ✅ runs | `anymal_c_xknee.xml`: no keyframe → `><` training pose |
 | Google Barkour v0 | ✅ runs | knee-forward legs: 6 joint axes flipped, keyframe pose |
 | Byte01 V1 (`--robot byte01_v1`) | ✅ runs | faces −x (`play.json`) → base rotated; calf meshes are the feet. Training pose |
 | Byte01 V2 (`--robot byte01_v2`) | ✅ runs | faces +y → base rotated; calf meshes are the feet. Training pose |
@@ -424,6 +430,27 @@ how far training has progressed.
 
 To make it available by name, put it in `quadrupeds/<folder>/<name>.xml` and
 use `--robot <name>`. Files named `scene*.xml` or `*_mjx.xml` are ignored.
+
+### Knee configuration: `>>` and `><`
+
+Quadrupeds come in two leg layouts, seen from the side:
+
+- `>>`: every knee bends backward (Go2, A1, Go1, Spot, Barkour).
+- `><`: the rear knees bend forward, so all knees point towards the middle
+  of the body (ANYmal B and C).
+
+Training covers both, 50/50 (`--morphology.x-knee-fraction`). A `><` robot
+gets mirrored rear knee ranges and a default pose with the rear thigh and
+calf angles negated (rear legs at -0.9 / +1.8 rad instead of 0.9 / -1.8). The
+policy sees which way each knee bends (the `knee_direction` observation).
+
+**Mark a `><` robot by its file name**: put `xknee` in it (or a literal `><`,
+though that is awkward in a shell), e.g. `anymal_c_xknee.xml`. Without a
+keyframe, the adapter then uses the `><` training pose instead of the `>>`
+one, which is the wrong pose for an ANYmal. A keyframe in the XML still takes
+priority. `--robot anymal_c` keeps working (partial name). Generated `><`
+robots carry the tag in their MJCF model name (`morph_quadruped_<seed>_xknee`).
+The logic lives in `generation/knees.py`.
 
 ---
 
@@ -491,9 +518,13 @@ exactly the treatment a training robot gets.
   `actuatorfrcrange`) still apply.
 - **Front vs back:** for robots whose long axis is y, `--forward auto` assumes
   +y. Use `--forward -y` if that's wrong.
-- **Out-of-distribution robots:** Spot (50 kg) and ANYmal C (45 kg) are heavier
-  than most training robots (p99 about 39 kg). Expect weaker performance there unless
-  training covers them (`--generalise`).
+- **Out-of-distribution robots:** generated robots span about 0.2–970 kg, so
+  Spot (50 kg) and ANYmal C (45 kg) are inside the size range, but their
+  shapes and mass distributions differ. `--generalise` trains on their own
+  models.
+- **Old checkpoints:** policies trained before the knee_direction
+  observation (47 actor inputs) can't be resumed or played with this code
+  (51 inputs).
 - **Temp files:** each `play.py` run leaves its adapted robot (and a copy of
   its meshes) in `/tmp/play_robot_*`.
 - **No early stopping:** training runs for `--agent.max-iterations`. Stop it

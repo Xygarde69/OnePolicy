@@ -13,6 +13,7 @@ Per term (observation names from velocity_env_cfg.py):
   phase            -> -phase: swapping FR<->FL shifts the trot clock by half
                    a period (foot_gait offsets [0, 0.5, 0.5, 0])
   joint_pos/vel, actions   FR<->FL, RR<->RL; hip (abduction) joints negated
+  knee_direction   FR<->FL, RR<->RL (per calf joint)
   height_scan      grid rows (y) reversed
   foot_*           FR<->FL, RR<->RL; contact force y negated (world frame,
                    approximate when the base is yawed; critic only)
@@ -61,6 +62,8 @@ def _term_map(env, term: str, dim: int) -> tuple[list[int], list[float]]:
     return identity, [-1.0] * dim
   if term in ("joint_pos", "joint_vel", "actions"):
     return _joint_map(list(env.scene["robot"].joint_names))
+  if term == "knee_direction":
+    return _joint_map([n for n in env.scene["robot"].joint_names if n.endswith("_calf_joint")])
   if term == "height_scan":
     sensor = env.scene["terrain_scan"].cfg.pattern
     nx = int(round(sensor.size[0] / sensor.resolution)) + 1

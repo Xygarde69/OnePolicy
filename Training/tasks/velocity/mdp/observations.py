@@ -23,6 +23,16 @@ def foot_height(
   return asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # (num_envs, num_sites)
 
 
+def knee_direction(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
+) -> torch.Tensor:
+  """+1 per leg whose knee bends forward, -1 backward, from the sign of the
+  robot's default knee angle (">>" robots: all -1, "><": rear +1). joint_pos
+  is relative to the default pose, so without this the two look the same."""
+  asset: Entity = env.scene[asset_cfg.name]
+  return torch.sign(asset.data.default_joint_pos[:, asset_cfg.joint_ids])
+
+
 def foot_air_time(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
   sensor: ContactSensor = env.scene[sensor_name]
   sensor_data = sensor.data

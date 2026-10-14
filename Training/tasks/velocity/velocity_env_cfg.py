@@ -80,6 +80,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.joint_vel_rel,
       noise=Unoise(n_min=-1.5, n_max=1.5),
     ),
+    "knee_direction": ObservationTermCfg(
+      func=mdp.knee_direction,
+      params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*_calf_joint")},
+    ),
     "actions": ObservationTermCfg(func=mdp.last_action),
     "height_scan": ObservationTermCfg(
       func=envs_mdp.height_scan,

@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import xml.etree.ElementTree as ET
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from itertools import chain
@@ -22,6 +23,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from .knees import is_x_knee, x_knee_pose
 from .mjcf_builder import make_robot_xml, mesh_assets
 
 # Per-env numeric fields copied from each compiled robot into its env.
@@ -59,6 +61,9 @@ class MorphologyGenCfg:
   """Gap between the lowest foot and the floor at spawn [m]."""
   workers: int = 0
   """Generation processes. 0 uses all CPUs."""
+  x_knee_fraction: float = 0.5
+  """Share of robots with "><" knees (rear knees bend forward, ANYmal); the
+  rest are ">>" (Go2). See knees.py."""
 
 
 def _names(model: mujoco.MjModel, obj: mujoco.mjtObj, n: int) -> list[str]:
@@ -182,13 +187,16 @@ def _extract(model: mujoco.MjModel, init_joint_pos: dict[str, float],
     "base_above_feet": _base_above_feet(model, init_joint_pos),
     "leg_length": leg_length,
     "foot_radius": foot_radius,
+    "x_knee": float(pose.get("RR_calf_joint", -1.0) > 0),  # "><" (knees.py)
   }
   return fields, structure, scalars
 
 
 def _make_one(args):
-  seed, delta_scale, init_joint_pos, clearance = args
-  xml, total_mass, max_vel = make_robot_xml(seed, delta_scale)
+  seed, delta_scale, x_knee_fraction, init_joint_pos, clearance = args
+  xml, total_mass, max_vel = make_robot_xml(seed, delta_scale, x_knee_fraction)
+  if is_x_knee(ET.fromstring(xml).get("model", "")):
+    init_joint_pos = x_knee_pose(init_joint_pos)
   fields, structure, scalars = _extract(_compile(xml), init_joint_pos, clearance)
   scalars.update(total_mass=total_mass, max_joint_velocity=max_vel)
   return seed, xml, scalars, fields, structure
@@ -197,7 +205,7 @@ def _make_one(args):
 def _save_bank(out_dir: Path, reference: mujoco.MjModel, seeds,
                scalars: dict[str, list], fields, sources=None) -> Path:
   """`scalars`: total_mass, max_joint_velocity, root_height, base_above_feet,
-  leg_length, foot_radius, one value per robot."""
+  leg_length, foot_radius, x_knee, one value per robot."""
   bank_path = out_dir / BANK_FILE
   np.savez(
     bank_path,
@@ -261,7 +269,8 @@ def generate_bank(num_envs: int, out_dir: Path, cfg: MorphologyGenCfg,
                      f"next to {sum(proxies.values())} proxies.")
   out_dir.mkdir(parents=True, exist_ok=True)
   base_seed = cfg.seed if cfg.seed is not None else secrets.randbits(31)
-  jobs = [(base_seed + i, cfg.delta_scale, init_joint_pos, cfg.foot_clearance)
+  jobs = [(base_seed + i, cfg.delta_scale, cfg.x_knee_fraction, init_joint_pos,
+           cfg.foot_clearance)
           for i in range(num_generated)]
   workers = cfg.workers or os.cpu_count() or 1
 
@@ -323,5 +332,6 @@ def generate_bank(num_envs: int, out_dir: Path, cfg: MorphologyGenCfg,
         f"(mass {span('total_mass', '.1f')} kg, "
         f"leg length {span('leg_length', '.2f')} m, "
         f"max joint velocity {span('max_joint_velocity', '.1f')} rad/s, "
-        f"spawn height {span('root_height', '.2f')} m)", flush=True)
+        f"spawn height {span('root_height', '.2f')} m, "
+        f"{np.mean(scalars['x_knee']):.0%} \"><\" knees)", flush=True)
   return bank_path

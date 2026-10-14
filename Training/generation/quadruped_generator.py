@@ -1,5 +1,5 @@
 import numpy as np
-from numpy.random import uniform, normal
+from numpy.random import uniform
 
 # Nominal values are Unitree Go2's (mujoco_menagerie go2.xml; foot mass from
 # Unitree's go2 URDF); each robot is sampled around them.
@@ -28,18 +28,14 @@ cyl_delta = go2_cylinder / 2
 # cyl_delta *= 0
 
 go2_hip_link_length = 0.0955  # Go2 hip link length (hip joint -> thigh joint)
-hip_link_length_range = (0.01, 0.5)  # min, max [m]
-hip_link_length_std = 0.05  # [m]
+hip_link_delta = 0.5  # +-50 %, like the other parts
 
-max_joint_velocity = 6 * np.pi  # [rad/s], same for every robot
+# Overall size relative to Go2: log-uniform in [1/max_scale, max_scale], so a
+# robot is as likely to be 2x Go2 as 0.5x and Go2 stays the median. Lengths
+# scale by it, masses by its cube.
+max_scale = 4.0
 
-
-def truncated_normal(mean, std, low, high):
-    """Sample N(mean, std) restricted to [low, high] (rejection sampling)."""
-    while True:
-        x = normal(mean, std)
-        if low <= x <= high:
-            return x
+max_joint_velocity = 6 * np.pi  # [rad/s] at Go2's size; ~1/sqrt(scale) (Froude)
 
 
 def create_robot(p,
@@ -54,8 +50,8 @@ def create_robot(p,
 
     #RANDOMIZATIONS
 
-    randomized_scale = 1
-    randomized_scale = uniform(0.8, 1.2)
+    log_scale = np.log(max_scale) * delta_scale
+    randomized_scale = float(np.exp(uniform(-log_scale, log_scale)))
 
     x_base, y_base, z_base = uniform(go2_base - base_delta_cur, go2_base + base_delta_cur) * randomized_scale
 
@@ -524,7 +520,8 @@ def create_robot(p,
     hip_joint_link_pos_2 *= y_base / go2_base[1] * uniform(0.9, 1.1)
 
     # hip link: thigh joint sits beside the hip joint, along the thigh joint axis (y), parallel to the ground
-    hip_link_length = truncated_normal(go2_hip_link_length, hip_link_length_std, *hip_link_length_range)
+    hip_link_delta_cur = hip_link_delta * delta_scale
+    hip_link_length = go2_hip_link_length * uniform(1 - hip_link_delta_cur, 1 + hip_link_delta_cur) * randomized_scale
     # hip_fixed_link_pos += (y_base - go2_base[1]) / 2
     # hip_fixed_link_pos *= y_base / go2_base[1] * y_r
 
@@ -684,6 +681,6 @@ def create_robot(p,
 
     for joint_index, joint_type in enumerate(linkJointTypes):
         if joint_type == p.JOINT_REVOLUTE:
-            p.changeDynamics(obUid, joint_index, maxJointVelocity=max_joint_velocity)
+            p.changeDynamics(obUid, joint_index, maxJointVelocity=max_joint_velocity / np.sqrt(randomized_scale))
 
     return obUid

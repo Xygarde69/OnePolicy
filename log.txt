@@ -3,7 +3,26 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-13  Generated robots are sampled around Go2, not A1
+2026-10-14  Per-link inertia randomisation; README randomisation section
+  - generation/mjcf_builder.py (generate_morphology): every link's inertia
+    from PyBullet (uniform-density solid of its shape and mass) is multiplied
+    by uniform(1 - 0.3 d, 1 + 0.3 d), d = --morphology.delta-scale, one
+    factor per link on all three axes so the diagonal inertia stays valid.
+    Drawn from the seeded RNG after create_robot, so robots stay reproducible
+    per seed.
+  - Why: link density was only implicitly random (mass and size drawn
+    separately) and inertia always that of a uniform solid; real legs carry
+    motors near the joints, so their inertia per kg differs.
+  - README: "What is randomized" now says Go2 instead of A1 (nominal values,
+    delta-scale 0, hip link mean 0.0955 m), lists the inertia factor, notes
+    that link COM offsets are fixed, and gives the new mass range (6-39 kg
+    p1-p99 over 4096 seeds, was "4-40 kg"). GenLoco credit no longer says
+    "unchanged".
+  - Checked: 200 seeds before/after: masses and body positions identical,
+    inertia ratio within [0.7, 1.3]; delta-scale 0 robots identical to before.
+    train_test.py smoke test (2 robots) runs, no NaNs.
+
+2026-10-13  Generated robots are sampled around Go2, not A1 (c7bfebe)
   - generation/quadruped_generator.py: the nominal values every robot is
     randomised around are now Unitree Go2's (mujoco_menagerie go2.xml, foot
     mass from Unitree's URDF): trunk half-extents 0.1881 x 0.04675 x 0.057 m

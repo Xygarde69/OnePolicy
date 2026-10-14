@@ -60,7 +60,7 @@ Morphology/
 │   ├── train.py                      # generate N robots, then train one policy
 │   ├── play.py                       # play the policy on one robot
 │   ├── generation/
-│   │   ├── quadruped_generator.py    # GenLoco's random quadruped generator (unchanged)
+│   │   ├── quadruped_generator.py    # GenLoco's random quadruped generator (Go2 nominal values)
 │   │   ├── mjcf_builder.py           # GenLoco robot -> Go2-named MJCF
 │   │   ├── bank.py                   # generate + compile + validate N robots
 │   │   ├── adapt.py                  # any quadruped MJCF -> training convention
@@ -184,7 +184,7 @@ $PY train.py --help                              # all --env.* / --agent.* optio
 | `--num-envs` | `env.scene.num_envs` | Parallel envs, one robot each |
 | `--task` | `flat` | `flat` or `rough` terrain |
 | `--morphology.seed` | random | Base seed. Env `i` uses `seed + i` |
-| `--morphology.delta-scale` | `1.0` | Scales every randomization range (0 gives A1-like robots) |
+| `--morphology.delta-scale` | `1.0` | Scales every randomization range (0 gives Go2-like robots) |
 | `--morphology.foot-clearance` | `0.02` | Gap between lowest foot and floor at spawn [m] |
 | `--morphology.workers` | all CPUs | Processes used for generation |
 | `--agent.max-iterations` | `10001` | PPO iterations |
@@ -216,23 +216,26 @@ about 100 MB for 4096 envs.
 ### What is randomized
 
 All randomization comes from GenLoco's `create_robot`
-(`generation/quadruped_generator.py`). Ranges are around a Unitree A1 and
-scale with `--morphology.delta-scale`:
+(`generation/quadruped_generator.py`, nominal values changed from A1's to
+Unitree Go2's) plus a per-link inertia factor (`generation/mjcf_builder.py`).
+Ranges are around a Go2 and scale with `--morphology.delta-scale`:
 
 | Property | Randomization |
 |---|---|
 | Overall scale | uniform 0.8–1.2 (applied to body and legs) |
-| Body box (length, width, height) | A1 dimensions ± 50 % |
-| Body density → body mass | A1 density ± 50 % |
-| Lower leg (radius, length) | A1 values ± 50 % |
+| Body box (length, width, height) | Go2 dimensions ± 50 % |
+| Body density → body mass | Go2 density ± 50 % |
+| Lower leg (radius, length) | Go2 values ± 50 % (0.213 m long, foot radius 0.022 m) |
 | Upper leg | lower leg × uniform 0.75–1.25 |
 | Hip offset from body centre | scales with body size × 0.9–1.1 |
-| Hip link length | truncated normal (mean 0.081 m, std 0.05, 0.01–0.5 m) |
-| Link masses | A1 masses ± 50 %, × scale³ |
+| Hip link length | truncated normal (mean 0.0955 m, std 0.05, 0.01–0.5 m) |
+| Link masses | Go2 masses ± 50 %, × scale³ |
+| Link inertia | PyBullet's uniform-density inertia of the link's shape and mass, × uniform 0.7–1.3 per link (same factor on all three axes: mass closer to or further from the COM) |
 | Max joint velocity | uniform π–6π rad/s (recorded, not enforced, see limitations) |
 
-With 4096 robots this gives total masses of about 4–40 kg and standing
-heights of about 0.15–0.6 m. Each robot's spawn height is computed from its
+With 4096 robots this gives total masses of about 6–39 kg (p1–p99; 4.5–55 kg
+extremes) and leg lengths of about 0.23–0.67 m (p5–p95; Go2 ~0.43 m). Link
+centre-of-mass offsets are fixed (GenLoco's A1 values), not randomized. Each robot's spawn height is computed from its
 own legs so that it starts just above the ground.
 
 On top of the morphology, the Go2 task's domain randomization still applies:
@@ -489,8 +492,8 @@ exactly the treatment a training robot gets.
 - **Front vs back:** for robots whose long axis is y, `--forward auto` assumes
   +y. Use `--forward -y` if that's wrong.
 - **Out-of-distribution robots:** Spot (50 kg) and ANYmal C (45 kg) are heavier
-  than the 4–40 kg training robots. Expect weaker performance there unless
-  training covers them.
+  than most training robots (p99 about 39 kg). Expect weaker performance there unless
+  training covers them (`--generalise`).
 - **Temp files:** each `play.py` run leaves its adapted robot (and a copy of
   its meshes) in `/tmp/play_robot_*`.
 - **No early stopping:** training runs for `--agent.max-iterations`. Stop it
@@ -519,7 +522,8 @@ exactly the treatment a training robot gets.
 - **Procedural generator:** `quadruped_generator.py` is from
   [GenLoco](https://github.com/HybridRobotics/GenLoco) (Feng et al.,
   *GenLoco: Generalized Locomotion Controllers for Quadrupedal Robots*,
-  CoRL 2022), used unchanged under the Apache 2.0 license. See
+  CoRL 2022), under the Apache 2.0 license, with its nominal dimensions and
+  masses changed from A1's to Go2's. See
   `generation/LICENSE_GenLoco.txt`.
 - **Simulation and RL:** [mjlab](https://github.com/mujocolab/mjlab),
   [MuJoCo](https://github.com/google-deepmind/mujoco) /

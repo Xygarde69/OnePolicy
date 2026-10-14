@@ -52,6 +52,11 @@ JOINT_RANGES = [
   (-2.69653369433, -0.916297857297),
 ] * 4
 
+# Each link's inertia is multiplied by uniform(1 - d, 1 + d) (d scaled by
+# delta_scale), all three axes alike so it stays physically valid: mass spread
+# further from or closer to the link's COM than a uniform-density solid.
+INERTIA_DELTA = 0.3
+
 PYBULLET_FIXED = 4
 PYBULLET_REVOLUTE = 0
 
@@ -114,6 +119,11 @@ def generate_morphology(seed: int, delta_scale: float = 1.0):
     }
   finally:
     pybullet.disconnect(cid)
+  # PyBullet's inertia assumes uniform density; randomise it per link.
+  d = INERTIA_DELTA * delta_scale
+  for i, dyn in dynamics.items():
+    factor = np.random.uniform(1 - d, 1 + d)
+    dynamics[i] = (dyn[0], dyn[1], tuple(np.asarray(dyn[2]) * factor), *dyn[3:])
   return rec, dynamics
 
 

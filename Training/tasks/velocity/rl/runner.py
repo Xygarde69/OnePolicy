@@ -26,6 +26,11 @@ PLOT_EVERY = 10
 # logged as Morphology/mean_reward_<group> (and plotted with --plot).
 SIZE_BUCKETS = ("small", "medium", "large")
 
+# Episodes shorter than this [s] are left out of the group means: a robot that
+# dies right after every reset finishes ~170 episodes per 20 s and would
+# otherwise fill its group's window on its own.
+MIN_EPISODE_S = 0.5
+
 # Reward terms whose per-step weighted value is also split by group, logged as
 # Morphology/<term>_<group> (iteration mean), with each group's mean command
 # level as Morphology/command_level_<group>. Shows which terms a lagging
@@ -41,8 +46,8 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-    # (group, return) of the last 100 episodes: the same window as rsl_rl's
-    # rewbuffer, so the overall mean is the episode-weighted mean of the groups.
+    # (group, return) of the last 100 episodes of at least MIN_EPISODE_S: the
+    # same window size as rsl_rl's rewbuffer (which keeps short ones too).
     self._sized_returns: deque[tuple[str, float]] = deque(maxlen=100)
     self._groups: tuple[str, ...] = ()
     self._track_size_buckets()
@@ -76,9 +81,12 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
     self._term_steps = 0
     process = self.logger.process_env_step
     log = self.logger.log
+    min_steps = MIN_EPISODE_S / self._sub_envs[0].step_dt
 
     def process_and_split(rewards, dones, extras, *a, **kw):
-      done = (dones > 0).flatten()
+      # rsl_rl counts this step into cur_episode_length in process() below.
+      long_enough = self.logger.cur_episode_length.flatten() + 1 >= min_steps
+      done = (dones > 0).flatten() & long_enough
       if torch.any(done):
         returns = (self.logger.cur_reward_sum + rewards.flatten())[done].tolist()
         for bucket, ret in zip(self._size_bucket[done].tolist(), returns):

@@ -481,42 +481,6 @@ def scaled_joint_acc_l2(
   return acc_sq * get_morph_scales(env).length ** 2
 
 
-# s_L range of the action smoothness terms. Their per-step value is mostly
-# the policy's exploration noise, the same for every robot (one std), so the
-# full s_L (~0.17-4.9) made the large third pay ~6x the medium third's
-# penalty for noise it can't remove, and it stalled (log.txt, 2026-10-17).
-ACTION_SMOOTHNESS_SCALE_RANGE = (0.5, 2.0)
-
-
-def _action_smoothness_scale(env: ManagerBasedRlEnv) -> torch.Tensor:
-  lo, hi = ACTION_SMOOTHNESS_SCALE_RANGE
-  return torch.clamp(get_morph_scales(env).length, lo, hi)
-
-
-def scaled_action_rate_l2(env: ManagerBasedRlEnv) -> torch.Tensor:
-  """Penalize the change of the actions per step, in Go2 units.
-
-  Actions are joint-angle targets, so they change ~1/time scale = s_L^-0.5
-  as fast as Go2's for the same gait (a small robot strides in fewer control
-  steps); the square is multiplied by s_L, clamped to
-  ACTION_SMOOTHNESS_SCALE_RANGE.
-  """
-  action = env.action_manager.action
-  rate_sq = torch.sum(torch.square(action - env.action_manager.prev_action), dim=1)
-  return rate_sq * _action_smoothness_scale(env)
-
-
-def scaled_action_acc_l2(env: ManagerBasedRlEnv) -> torch.Tensor:
-  """Penalize the second difference of the actions, in Go2 units.
-
-  It scales with 1 / time scale^2 = 1/s_L, so its square is multiplied by
-  s_L^2, with s_L clamped to ACTION_SMOOTHNESS_SCALE_RANGE.
-  """
-  am = env.action_manager
-  acc = am.action - 2 * am.prev_action + am.prev_prev_action
-  return torch.sum(torch.square(acc), dim=1) * _action_smoothness_scale(env) ** 2
-
-
 def base_height(
   env: ManagerBasedRlEnv,
   sensor_name: str,

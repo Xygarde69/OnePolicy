@@ -3,7 +3,23 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  Train page: test the run in the sim, train again; ONNX off by default
+2026-10-17  Revert the training setup to the one OnePolicy was trained with (40fec60)
+  - What: rewards.py and velocity_env_cfg.py back to 40fec60: action_rate_l2
+    / action_acc_l2 use mjlab's unscaled terms again; scaled_action_rate_l2,
+    scaled_action_acc_l2 and the s_L clamp (1aca06b, 8bd455e) removed.
+  - Why: OnePolicy (run 2026-10-17_05-05-36) was trained at a clean 40fec60;
+    the later runs with the Froude-scaled smoothness terms lagged (see the
+    entries below). Training now matches OnePolicy's run again.
+  - Kept: everything else since 40fec60 leaves training unchanged with the
+    defaults: runner per-third term logging and --export-onnx, generator
+    params / condition (empty by default; same draws per seed), the MJCF
+    fixer (play / onboard / proxies for --generalise only), web UI.
+  - Checked: the run's params/env.yaml lists mjlab.envs.mdp.rewards
+    action_rate_l2 / action_acc_l2 (weights -0.05 / -0.01), as now;
+    git diff 40fec60 -- Training/tasks/velocity shows only runner.py logging;
+    train_test.py smoke test (2 robots, 3 s, no crash/NaN).
+
+2026-10-17  Train page: test the run in the sim, train again; ONNX off by default (142ee20)
   - What: train.py --export-onnx (default True; runner.save skips the
     policy.onnx export when False). server.py passes --export-onnx False
     unless the train request sets export_onnx (a switch on the setup card,

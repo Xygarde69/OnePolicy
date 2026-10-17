@@ -3,7 +3,66 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  Generator params, morphology conditions, UDP command port
+2026-10-17  Web UI: Next.js + shadcn neo-brutalist front end (Web/ui)
+  - What: Web/ui (React 19, TypeScript, Next 16 static export, Tailwind 4,
+    shadcn/ui restyled: ink borders, hard shadows, cream paper, flat
+    yellow/pink/cyan/lime). Landing (spinning generated robot, two choices);
+    Train / OnePolicy each offer Quadruped or Custom morphology (an
+    under-construction popup). Train -> Quadruped: drag-and-drop folder upload
+    with an animated file tree, convention check (errors + FIX hints, joint
+    table, in-page XML editor), parts popup (base, thigh, calf over ripple
+    rings), reward table (weights + params, curriculum-set weights locked),
+    limits sliders, morphology condition editor (clickable variables, test on
+    32 seeds), start training (installs the robot, --generalise share, from
+    scratch or fine-tuning a checkpoint), "TRAINING..." panel with X for live
+    stats (tiles, reward / episode length / std lines, per-term bars, log),
+    checkpoint download + .pt import. OnePolicy -> Quadruped: preloaded robots
+    spinning in 3D (one shared canvas, drei View), generator with seed +
+    sliders (unset = seed's draw) and live preview, upload with the
+    convention in short; parts popup; terrain picker (only flat enabled, the
+    rest tagged under construction); the viser viewer embedded with WASD /
+    arrow driving (drive mode keeps keys on the page, camera mode orbits),
+    speed sliders. Charts follow the dataviz checks (bonus/penalty pair
+    #3a62d9/#d9367f passes the CVD validator; single-series lines in ink).
+  - Why: one place to train a robot or try OnePolicy, instead of CLI flags.
+  - Checked: tsc and next build clean; Playwright (Chromium, swiftshader)
+    screenshots of every page and step with no page errors: landing,
+    construction popup, preloaded grid (all 12 robots render), generator,
+    upload tree with unitree_go2 (26 files), Go2 check passes, parts popup,
+    rewards (edit marks the row), conditions test (6/32 kept), train setup,
+    a real 64-env 40-iteration run in the training view and stats overlay.
+    Fixed on the way: robots out of frame (drei camera didn't look at the
+    origin), parts popup canvases 0x0 (scaled-in tiles; resize offsetSize),
+    outline thickness (drei's is in pixels), generator decorations of fixed
+    size dwarfing small robots (previews use collision geoms).
+
+2026-10-17  Web server API for the new UI (Web/server.py, Web/geometry.py)
+  - What: server.py serves Web/ui/out (old page at /legacy, and at / when
+    there is no build) and adds: /api/geometry (geometry.py: visible geoms of
+    a bundled / generated / uploaded robot in its default pose, world frame,
+    tagged base / <leg>_<hip|thigh|calf>, meshes as base64; real robots are
+    fixed + adapted as play.py does), /api/rewards (reward terms with
+    weights, float params, docstrings and curriculum stages; limits; condition
+    variables), /api/condition_test, /api/train + train_status (parses
+    rsl_rl's per-iteration blocks: history, latest stats, ETA, checkpoints)
+    + train_stop (SIGINT to the process group), /api/import_policy, GET
+    /api/download (only .pt/.onnx/.csv/.png under the runs or OnePolicy/),
+    /api/drive (keyboard command -> play.py --command-port over UDP); play
+    takes generator params, terrain (flat only) and drive. Checkpoint list
+    puts OnePolicy/OnePolicy.pt first. HEAD requests supported.
+  - Fixed: log_message crashed on non-string args (send_error passes an
+    HTTPStatus), which dropped those connections (ERR_EMPTY_RESPONSE); a
+    stopped sim reported exit_code null (looked like it was still starting);
+    rsl_rl's right-aligned stats were dropped by the noise filter.
+  - Checked over HTTP: state, rewards (26 terms), geometry (generated, go2,
+    spot, anymal_c, barkour_vb), condition_test, download (OnePolicy.pt 4.8
+    MB; /etc/passwd refused), a curriculum weight change refused, training
+    64 envs x 3 and x 40 iterations with a reward weight, a reward param and
+    a condition (flags accepted, stats parsed, checkpoints listed), stop
+    mid-run, play of a generated robot with --command-port + drive commands
+    (viser up, commands accepted), stairs refused. Test runs deleted.
+
+2026-10-17  Generator params, morphology conditions, UDP command port (b6452e6)
   - What: quadruped_generator.create_robot(params=...) replaces chosen random
     draws (PARAM_KEYS: scale, base_length/width/height, density,
     thigh_length, calf_length, leg_radius, hip_link, link_mass; all but scale

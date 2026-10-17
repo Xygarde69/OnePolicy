@@ -1,1 +1,4 @@
 CLAUDE.md
+# Fixed robot copies written by Training/generation/mjcf_fix.py next to each MJCF.
+*.temp.xml
+.*.scratch.xml

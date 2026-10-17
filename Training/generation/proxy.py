@@ -33,9 +33,8 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from .adapt import adapt_quadruped
 from .bank import DEFAULT_MAX_JOINT_VELOCITY, _compile, _extract, foot_point
-from .catalog import default_pose, find_robot, robot_defaults
+from .catalog import find_robot, load_robot, robot_defaults
 from .mjcf_builder import make_robot_xml
 
 LEGS = ("FR", "FL", "RR", "RL")
@@ -57,8 +56,11 @@ def _fmt(v) -> str:
   return " ".join(f"{float(x):.6g}" for x in np.atleast_1d(v))
 
 
-def _compile_adapted(xml_path: str, forward: str):
-  robot = adapt_quadruped(xml_path, forward)
+def _compile_adapted(xml_path: str, forward: str, train_pose: dict[str, float]):
+  """The robot fixed and adapted as play.py does (catalog.load_robot), compiled.
+  Returns (adapted robot, model, default pose, log)."""
+  loaded = load_robot(Path(xml_path), forward, train_pose=train_pose)
+  robot = loaded.robot
   with tempfile.TemporaryDirectory() as d:
     path = Path(d) / "robot.xml"
     path.write_text(robot.xml)
@@ -68,7 +70,7 @@ def _compile_adapted(xml_path: str, forward: str):
       p.parent.mkdir(parents=True, exist_ok=True)
       p.write_bytes(data)
     model = mujoco.MjModel.from_xml_path(str(path))
-  return robot, model
+  return robot, model, loaded.pose, loaded.log
 
 
 def _subtree(model, b: int) -> set[int]:
@@ -133,8 +135,7 @@ def make_proxy_xml(name: str, xml_path: str, train_pose: dict[str, float],
                    forward: str = "auto") -> tuple[str, dict[str, float], ProxyReport]:
   """Generated-structure MJCF with the numbers of the real robot at xml_path,
   and the robot's default pose (keyframe, else the training pose fitted)."""
-  robot, model = _compile_adapted(xml_path, forward)
-  pose, log = default_pose(robot, Path(xml_path), "auto", train_pose)
+  robot, model, pose, log = _compile_adapted(xml_path, forward, train_pose)
   data = mujoco.MjData(model)
   data.qpos[:] = model.qpos0
   data.qpos[:3] = 0.0

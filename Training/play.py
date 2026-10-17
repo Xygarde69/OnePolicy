@@ -45,11 +45,10 @@ from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer  # noqa: E402
 
 from assets.morph_quadruped.constants import INIT_JOINT_POS  # noqa: E402
 from gamepad import DualSenseGamepad  # noqa: E402
-from generation.adapt import adapt_quadruped  # noqa: E402
 from generation.catalog import (  # noqa: E402
   QUADRUPEDS_DIR,
-  default_pose,
   find_robot,
+  load_robot,
   robot_defaults,
 )
 from generation.bank import (  # noqa: E402
@@ -96,6 +95,9 @@ class PlayConfig:
   one, else train ("auto")."""
   scale_actuators: bool = True
   """Scale Go2 PD gains / effort limits to the robot's size, as in training."""
+  own_motor_limits: bool = False
+  """Keep the MJCF's joint actuatorfrcrange (its own motors' torque limits)
+  instead of letting the training actuators give what the policy expects."""
   device: str | None = None
   video: bool = False
   video_length: int = 200
@@ -126,8 +128,10 @@ class PlayConfig:
   yaw), whether defaulted or given."""
 
 
-def prepare_robot(cfg: PlayConfig, robot_dir: Path) -> tuple[dict[str, float] | None, str]:
-  """Build the one-robot bank to play in robot_dir. Returns (default pose, label)."""
+def prepare_robot(cfg: PlayConfig, robot_dir: Path):
+  """Build the one-robot bank to play in robot_dir.
+
+  Returns (default pose, label, catalog.LoadedRobot or None for --random)."""
   sources = [cfg.random, cfg.robot is not None, cfg.robot_xml != ROBOT_XML]
   if sum(sources) > 1:
     raise ValueError("Pass only one of --random, --robot and --robot-xml.")
@@ -135,7 +139,7 @@ def prepare_robot(cfg: PlayConfig, robot_dir: Path) -> tuple[dict[str, float] | 
   if cfg.random:
     seed = cfg.seed if cfg.seed is not None else secrets.randbits(31)
     generate_bank(1, robot_dir, MorphologyGenCfg(seed=seed, workers=1), INIT_JOINT_POS)
-    return None, f"random_{seed}"
+    return None, f"random_{seed}", None
 
   if cfg.robot is not None:
     xml_path = find_robot(cfg.robot, Path(cfg.quadrupeds_dir))
@@ -154,17 +158,21 @@ def prepare_robot(cfg: PlayConfig, robot_dir: Path) -> tuple[dict[str, float] | 
   if forward != cfg.forward:
     print(f"[INFO]: Forward axis {forward} (from {xml_path.parent / 'play.json'})")
 
-  # Rewrite the robot into the training convention.
-  robot = adapt_quadruped(str(xml_path), forward)
-  for line in robot.report:
+  # Fix the MJCF (writes <stem>.temp.xml next to it, see generation/mjcf_fix.py),
+  # then rewrite that into the training convention.
+  loaded = load_robot(xml_path, forward, cfg.init_pose, INIT_JOINT_POS,
+                      own_motor_limits=cfg.own_motor_limits)
+  for line in loaded.fixed.summary().splitlines():
     print(f"[INFO]: {line}")
-  pose, log = default_pose(robot, xml_path, cfg.init_pose, INIT_JOINT_POS)
-  for line in log:
+  for line in loaded.robot.report:
+    print(f"[INFO]: {line}")
+  for line in loaded.log:
     print(f"[WARN]: {line[5:]}" if line.startswith("WARN ") else f"[INFO]: {line}")
+  pose = loaded.pose
 
-  single_robot_bank(robot.xml, robot.assets, robot_dir, pose)
+  single_robot_bank(loaded.robot.xml, loaded.robot.assets, robot_dir, pose)
   print(f"[INFO]: Adapted robot written to {robot_dir / 'env_00000.xml'}")
-  return pose, xml_path.stem
+  return pose, xml_path.stem, loaded
 
 
 def attach_gamepad(env: ManagerBasedRlEnv, cfg: PlayConfig) -> None:
@@ -207,7 +215,7 @@ def _play(cfg: PlayConfig, robot_dir: Path):
 
   device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
 
-  pose, label = prepare_robot(cfg, robot_dir)
+  pose, label, _ = prepare_robot(cfg, robot_dir)
 
   env_cfg = (morph_quadruped_flat_env_cfg if cfg.task == "flat"
              else morph_quadruped_rough_env_cfg)(play=True)

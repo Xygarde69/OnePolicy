@@ -3,7 +3,53 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  Review: the one policy left, and why the runs after it did worse
+2026-10-17  MJCF fixer: <robot>.temp.xml with the fixes and what to change in your file
+  - What: generation/mjcf_fix.py (new). fix_mjcf() writes <stem>.temp.xml
+    next to the robot MJCF (git-ignored), in the robot's own names, every
+    change marked "<!-- OnePolicy: ... -->" with what to change in your
+    file, and a header listing changes + suggestions. catalog.load_robot()
+    = fix -> adapt.py on the temp file -> pose; play.py, onboard.py, the
+    web harness, proxy.py and train.py --generalise all use it. Fixes:
+    scene <include> -> robot file; stale keyframe dropped; missing free
+    joint added; extra joints (arm, toes) removed with their actuators /
+    sensors; missing or mesh/box feet -> sphere at the leg tip; legs
+    re-zeroed so 0 = straight down (bodies rotated about the joint, ranges
+    and keyframes shifted); knee layout from the knee ranges (keyframe,
+    then file name if both ways are allowed); front knees bending forward
+    -> robot assumed to face the other way; keyframe "home" = training
+    pose; joint actuatorfrcrange removed (play --own-motor-limits True
+    keeps it); leg joint damping -> 0.1. Reported only: motors below 65 %
+    of the Go2-scaled training peak, torque to stand, joint friction,
+    heavy shins, size outside the training range. onboard.py's sim check
+    is now the policy standing (zero command, 3 s) + walking (5 s), with
+    the peak torque per joint vs the MJCF's own motor limit. The old
+    zero-action check failed even Go2 (kp 20/40 sags until a calf touches).
+    Byte01 v1's play.json (forward -x) deleted: with it the old pipeline
+    walked it 1.87 m backwards; +x walks forward.
+  - Why (all with model_1200, the only checkpoint):
+    * Barkour v0/vB: their zero pose folds the legs along the body (hip
+      89 deg, knee 166 deg from straight). v0's keyframe became calf +1.0
+      on every leg, so knee_direction said all knees bend forward, a
+      layout no training robot has; it collapsed with joints at their
+      limits. vB had no keyframe and was refused.
+    * Byte01 v2: joint actuatorfrcrange +-36.54 Nm clamped the training
+      actuators (knee up to 83 Nm at its size) and its feet were the calf
+      meshes; 1.43 of 2.60 m. The real AK60 knees are the actual limit: the
+      policy used 44-52 Nm at the knee walking 0.5 m/s.
+    * Go2/A1/Go1 ship joint damping 1-2 vs the training 0.1: Go2 tracked
+      0.5 m/s at 0.30 m/s, A1 at 0.26; with 0.1, 0.46 and 0.44.
+  - Checked: fix_mjcf on all 12 robots in quadrupeds/; onboard.py --robot
+    <each> --yes --no-viewer: all stand and walk (distance / ideal at 0.5
+    m/s): go2 2.10/2.50, go1 2.21/2.50, a1 2.08/2.42, spot 2.34/3.11,
+    spot_arm 2.87/3.11 (was refused), anymal_b 1.88/2.94, anymal_c
+    2.69/3.04, barkour_v0 2.32/2.51 (fell before), barkour_vb 1.84/2.53
+    (was refused), byte01_v2 2.34/2.57 (was 1.43); byte01_v1 with +x 0.43
+    m/s at 0.5. Knee torque used vs own MJCF limit flags byte01_v2 (43.6 vs
+    36.5 Nm) and anymal_b (116 vs 40 Nm). make_proxy for go2, barkour_v0,
+    anymal_c, byte01_v2; web api_inspect on barkour_vb passes; train_test
+    smoke test (2 robots, 3 s, no crash/NaN).
+
+2026-10-17  Review: the one policy left, and why the runs after it did worse (a5b4965)
   - The only checkpoint left in Training/logs is
     2026-10-17_05-05-36/model_1200.pt: started 2026-10-17 05:05 UTC, last
     saved 06:14 UTC (1280 iterations logged), commit 40fec60, 4096 envs,

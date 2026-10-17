@@ -378,30 +378,67 @@ don't matter. The adapter takes care of those:
 The adapted robot is written to a temporary directory
 (`/tmp/play_robot_*/env_00000.xml`). The path is printed so you can inspect it.
 
+### The fixer: `<robot>.temp.xml`
+
+Before the adapter runs, `generation/mjcf_fix.py` fixes what it can and writes
+**`<robot>.temp.xml` next to your MJCF** (git-ignored). Play, onboarding and
+training read that file, not yours. It keeps your names, so you can diff it
+against your file. Each change is marked with an `<!-- OnePolicy: ... -->`
+comment that says what to change in your own MJCF, and a header comment lists
+all changes and suggestions. `play.py` and `onboard.py` print the same summary.
+
+| Fixed automatically | Why |
+|---|---|
+| Scene that `<include>`s the robot → the robot file | The adapter needs the robot itself |
+| Stale `<keyframe>` (wrong qpos size) → dropped | Otherwise MuJoCo refuses the file |
+| No free joint → `<freejoint/>` on the body holding the legs | The torso must float |
+| Extra joints (arm, head, tail, toes) → removed, with their actuators/sensors/tendons | OnePolicy drives 4 legs × 3 hinges |
+| Leg without a foot collision geom, or with a mesh/box foot → sphere at the leg tip | Training feet are round. A mesh foot does not roll (Byte01: drifted while standing) |
+| Zero pose not "legs straight down" → leg bodies re-zeroed, ranges shifted | The training pose and the `knee_direction` observation assume it. Barkour's zero pose folds the legs along the body, so its front knees looked like they bent forward, which no training robot does |
+| Knee layout: rear knees forward (`><`) from the knee ranges; front knees forward → robot assumed to face the other way | Ranges show which way a knee bends. The file name (`xknee`) is used only when the ranges allow both |
+| Keyframe `home` = the `>>`/`><` training pose | The pose the policy was trained around |
+| Joint `actuatorfrcrange` → removed (`play.py --own-motor-limits True` keeps it) | It clamps the training actuators below what the policy expects (Byte01 v2: knees clamped at 36.5 Nm, the policy expects up to ~83 Nm) |
+| Leg joint damping → 0.1 (the training value) | Go2/A1/Go1 ship damping 1-2. At 0.1, Go2 tracks a 0.5 m/s command at 0.46 m/s instead of 0.30 |
+
+**Only reported** (the sim can't change your hardware): motors weaker than
+~65 % of what OnePolicy was trained with at the robot's size and mass (Go2's
+peak torque × mass ratio × leg length ratio), the torque needed to stand, joint
+friction, heavy lower legs and size outside the training range. The onboard
+sim check also prints the peak torque the policy actually used per joint
+against your motors' limits.
+
+The re-zeroing changes what joint angle 0 means. On a real robot, the policy's
+angle is `q_yours − offset` (`FixedMjcf.joint_offsets`, printed per joint).
+
 ---
 
 ## Robot compatibility
 
-The table below comes from 2 s headless runs with a trained checkpoint. Each
-robot builds, loads the policy and steps without falling. These runs test
-**compatibility, not walking quality**. How well each robot walks depends on
-how far training has progressed.
+The table comes from `onboard.py --robot <name> --yes --no-viewer` with
+`2026-10-17_05-05-36/model_1200.pt` (an early checkpoint, 1200 iterations).
+Each robot stands 3 s under the policy with a zero command, then walks 5 s at
+0.5 m/s (Go2 units, scaled to the robot). "Walked" is the distance covered out
+of the ideal. "Knee torque" is the peak knee torque the policy used against
+the motor limit in the robot's own MJCF, where one is set.
 
-| Robot | Result | Notes |
-|---|---|---|
-| Unitree Go2 | ✅ runs | keyframe pose. Legs reordered from FL, FR, RL, RR |
-| Unitree Go1 | ✅ runs | keyframe pose |
-| Unitree A1 | ✅ runs | keyframe pose |
-| Boston Dynamics Spot | ✅ runs | keyframe pose, 50 kg → gains × 3.3 |
-| ANYbotics ANYmal B | ✅ runs | `anymal_b_xknee.xml`: no keyframe → `><` training pose (unlimited joints) |
-| ANYbotics ANYmal C | ✅ runs | `anymal_c_xknee.xml`: no keyframe → `><` training pose |
-| Google Barkour v0 | ✅ runs | knee-forward legs: 6 joint axes flipped, keyframe pose |
-| Byte01 V1 (`--robot byte01_v1`) | ✅ runs | faces −x (`play.json`) → base rotated; calf meshes are the feet. Training pose |
-| Byte01 V2 (`--robot byte01_v2`) | ✅ runs | faces +y → base rotated; calf meshes are the feet. Training pose |
-| Byte01 V2 primitive (`--robot byte01_v2_primitive`) | ✅ runs | mesh-free V2; base/thighs are visual-only, so body–ground contact is not detected |
-| Random generated robot | ✅ runs | the training distribution |
-| Google Barkour vB | ❌ stops | zero pose has folded legs and there is no keyframe. Add a standing keyframe |
-| Spot with arm (`spot_arm`) | ❌ stops | arm joints → more than 12 hinge joints |
+| Robot | Walked | Knee torque used / MJCF limit | What the fixer changed |
+|---|---|---|---|
+| Unitree Go2 | 2.10 / 2.50 m | 17.5 / 45.4 Nm | damping 2 → 0.1 |
+| Unitree Go1 | 2.21 / 2.50 m | 11.5 / 35.5 Nm | damping 1-2 → 0.1 |
+| Unitree A1 | 2.08 / 2.42 m | 11.1 / 33.5 Nm | damping 1-2 → 0.1 |
+| Boston Dynamics Spot | 2.34 / 3.11 m | (±1000 Nm placeholder) | actuatorfrcrange removed, damping 0 → 0.1 |
+| Spot with arm (`spot_arm`) | 2.87 / 3.11 m | (placeholder) | 7 arm joints removed (rigid arm) |
+| ANYbotics ANYmal B (`anymal_b_xknee`) | 1.88 / 2.94 m | **116 / 40 Nm** | `><` from the file name, knee re-zeroed 19° |
+| ANYbotics ANYmal C (`anymal_c_xknee`) | 2.69 / 3.04 m | not captured / 80 Nm | `><` from the file name, knee re-zeroed 16° |
+| Google Barkour v0 | 2.32 / 2.51 m | 10.8 Nm (no limit) | legs re-zeroed (89° hip, 166° knee), round feet |
+| Google Barkour vB | 1.84 / 2.53 m | 14.8 / 18.0 Nm | legs re-zeroed, round feet, standing keyframe |
+| Byte01 V1 | 0.43 m/s at 0.5 (diag) | | round feet, actuatorfrcrange removed. Faces +x (the old `play.json` −x made it walk backwards) |
+| Byte01 V2 | 2.34 / 2.57 m | **43.6 / 36.5 Nm** | faces +y, round feet, actuatorfrcrange removed |
+| Random generated robot | ✅ | | the training distribution |
+
+Before the fixer, Barkour v0 collapsed (its front knees looked like they
+bent forward to the policy), Barkour vB and Spot-with-arm failed to load, and
+Byte01 V2 walked 1.43 m with its knees clamped at 36.5 Nm.
 
 ---
 
@@ -414,18 +451,15 @@ how far training has progressed.
    ```bash
    $PY play.py --robot-xml path/to/robot.xml --agent zero
    ```
-   The printed `[INFO]` lines show what the adapter did (flipped axes, rotated
-   base, chosen pose).
+   The printed `[INFO]` lines show what the fixer and the adapter did. Read
+   `path/to/robot.temp.xml`: its header lists the changes and what to change in
+   your own MJCF (see [the fixer](#the-fixer-robottempxml)).
 3. If it faces backwards when commanded forward, add `--forward -y` (or `-x`).
    For a robot in `quadrupeds/`, put `{"forward": "-x"}` in a `play.json`
-   next to its XML so `--robot <name>` picks it up (see `quadrupeds/byte01_v1`).
-4. If it spawns badly or its legs fold, add a standing pose to the XML:
-   ```xml
-   <keyframe>
-     <!-- base x y z, quat w x y z, then the 12 joint angles in the XML's order -->
-     <key name="home" qpos="0 0 0.35  1 0 0 0  0 0.9 -1.8  0 0.9 -1.8  0 0.9 -1.8  0 0.9 -1.8"/>
-   </keyframe>
-   ```
+   next to its XML so `--robot <name>` picks it up.
+4. Run the headless check, `$PY onboard.py path/to/robot.xml --yes --no-viewer`.
+   It stands the robot with the policy, walks it, and compares the torques the
+   policy used with your motors.
 5. Play it with the policy: `$PY play.py --robot-xml path/to/robot.xml`.
 
 To make it available by name, put it in `quadrupeds/<folder>/<name>.xml` and
@@ -444,11 +478,12 @@ gets mirrored rear knee ranges and a default pose with the rear thigh and
 calf angles negated (rear legs at -0.9 / +1.8 rad instead of 0.9 / -1.8). The
 policy sees which way each knee bends (the `knee_direction` observation).
 
-**Mark a `><` robot by its file name**: put `xknee` in it (or a literal `><`,
-though that is awkward in a shell), e.g. `anymal_c_xknee.xml`. Without a
-keyframe, the adapter then uses the `><` training pose instead of the `>>`
-one, which is the wrong pose for an ANYmal. A keyframe in the XML still takes
-priority. `--robot anymal_c` keeps working (partial name). Generated `><`
+The fixer reads the layout from the knee joint ranges. A knee whose range
+stays on one side of "straight" can only bend that way. When the ranges allow
+both directions (ANYmal: ±540°), it uses the XML's keyframe, then the file
+name. **Mark such a `><` robot by its file name**: put `xknee` in it (or a
+literal `><`, though that is awkward in a shell), e.g. `anymal_c_xknee.xml`.
+`--robot anymal_c` keeps working (partial name). Generated `><`
 robots carry the tag in their MJCF model name (`morph_quadruped_<seed>_xknee`).
 The logic lives in `generation/knees.py`.
 

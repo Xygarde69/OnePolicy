@@ -9,17 +9,19 @@
 
 Existing and random robots go straight to steps 6-7. Your own MJCF:
   1. Load the MJCF and list every joint with the leg / role it looks like.
-  2. Check it against the adapter convention (generation/adapt.py): one free
-     joint, 4 legs x (abduction, hip, knee) hinges, a foot collision geom per
-     leg, a standing pose. Each failure comes with the fix.
+  2. Fix it (generation/mjcf_fix.py): writes <file>.temp.xml next to it with
+     every fix marked by a "OnePolicy:" comment (re-zeroed legs, round feet,
+     extra joints removed, standing keyframe, torque clamps, damping) and
+     lists what to change in your own MJCF / robot. Then check the fixed copy
+     against the adapter convention (generation/adapt.py).
   3. Until it passes: the user edits the XML (original backed up as
      <file>.orig), presses Enter, and it is checked again.
   4. Ask what can't be inferred: which way is forward, whether the rear knees
      bend forward (ANYmal-style "><").
   5. Install into ../quadrupeds/<name>/ (XML + every mesh/texture it uses +
      play.json), so `play.py --robot <name>` finds it.
-  6. Headless check in simulation: 2 s of zero actions (does it stand?), then
-     5 s of the policy walking forward (does it move?).
+  6. Headless check in simulation: the policy standing (3 s, zero command),
+     then walking forward (5 s), with the torques it uses vs. your motors.
   7. Open the viewer with the policy (play.py).
 """
 
@@ -47,10 +49,10 @@ from generation.adapt import (  # noqa: E402
   ConventionError,
   MIN_AXIS_ALIGNMENT,
   _collect_assets,
-  adapt_quadruped,
 )
-from generation.catalog import QUADRUPEDS_DIR, available_robots, default_pose, find_robot  # noqa: E402
+from generation.catalog import QUADRUPEDS_DIR, available_robots, find_robot, load_robot  # noqa: E402
 from generation.knees import X_KNEE_TAG, is_x_knee  # noqa: E402
+from generation.mjcf_fix import FixError  # noqa: E402
 
 TRAINING_DIR = Path(__file__).resolve().parent
 ROLES = ("abduction", "hip", "knee")
@@ -74,6 +76,12 @@ HINTS = (
   ("axis", "Joint order per leg must be abduction (axis along the torso's long axis), "
            "hip, knee (both along the sideways axis), each within ~25 degrees."),
   ("same parent", "All 4 legs must be direct children of the same body (the torso)."),
+  ("leg(s)", "Each leg must be a chain of 3 hinge joints (abduction > hip > knee bodies) "
+             "inside the torso body, the one with the <freejoint/>."),
+  ("free joints", "Only the torso may have a <freejoint/>."),
+  ("top-level body", "Put the whole robot inside one body (the torso) under <worldbody>."),
+  ("one per corner", "Legs must attach at 4 different corners of the torso; try another "
+                     "forward axis."),
 )
 
 
@@ -243,8 +251,9 @@ def keyframe_snippet(xml_path: Path) -> str:
   )
 
 
-def run_checks(xml_path: Path, forward: str, x_knee: bool):
-  """Returns (errors, adapted robot, default pose, pose notes)."""
+def run_checks(xml_path: Path, forward: str, x_knee: bool | None):
+  """Returns (errors, adapted robot, default pose, notes): fix (mjcf_fix.py,
+  writes <file>.temp.xml), adapt, pose. x_knee None: infer it."""
   try:
     mujoco.MjModel.from_xml_path(str(xml_path))
   except Exception as e:  # noqa: BLE001
@@ -258,25 +267,19 @@ def run_checks(xml_path: Path, forward: str, x_knee: bool):
       hint = "Fix the XML error above (MuJoCo's message names the element)."
     return [f"MuJoCo cannot load the file: {msg}\n  FIX: {hint}"], None, None, []
   try:
-    robot = adapt_quadruped(str(xml_path), forward)
-  except ConventionError as e:
+    loaded = load_robot(xml_path, forward, "auto", INIT_JOINT_POS, x_knee)
+  except (ConventionError, FixError) as e:
     msg = str(e)
     hint = next((h for key, h in HINTS if key in msg), "See the convention in README.md.")
     return [f"{msg}\n  FIX: {hint}"], None, None, []
   except FileNotFoundError as e:
     return [f"A referenced file is missing: {e}"], None, None, []
-  # The pose depends on the knee layout, which the installed name will carry.
-  stem = xml_path.stem
-  if x_knee and not is_x_knee(stem):
-    stem += f"_{X_KNEE_TAG}"
-  try:
-    pose, notes = default_pose(robot, xml_path.with_name(stem + ".xml"), "auto", INIT_JOINT_POS)
   except ValueError as e:
-    return [f"No usable standing pose: {e}\n{keyframe_snippet(xml_path)}"], robot, None, []
-  return [], robot, pose, notes
+    return [f"No usable standing pose: {e}\n{keyframe_snippet(xml_path)}"], None, None, []
+  return [], loaded.robot, loaded.pose, loaded.fixed.summary().splitlines() + loaded.log
 
 
-def check_until_valid(xml_path: Path, forward: str, x_knee: bool, auto: bool):
+def check_until_valid(xml_path: Path, forward: str, x_knee: bool | None, auto: bool):
   backed_up = False
   while True:
     try:
@@ -345,7 +348,9 @@ def install(xml_path: Path, name: str, x_knee: bool, forward: str, overwrite: bo
 # ------------------------------------------------- 6. headless sim check
 
 def sim_check(play_cfg, policy: Path | None, walk_command: float) -> bool:
-  """Zero actions for 2 s, then the policy for 5 s. True if both look fine."""
+  """The policy standing (3 s, zero command), then walking forward (5 s).
+  True if both look fine. Also compares the torques the policy used with the
+  robot's own motor limits (from its MJCF), which the sim doesn't enforce."""
   import tempfile
 
   import torch
@@ -359,13 +364,14 @@ def sim_check(play_cfg, policy: Path | None, walk_command: float) -> bool:
     morph_quadruped_ppo_runner_cfg,
     set_morphologies,
   )
+  from tasks.velocity.mdp.rewards import _joint_order_torques
   from tasks.velocity.rl import VelocityOnPolicyRunner
   from dataclasses import asdict
 
   device = "cuda:0" if torch.cuda.is_available() else "cpu"
   robot_dir = Path(tempfile.mkdtemp(prefix="onboard_robot_"))
   try:
-    pose, _ = play.prepare_robot(play_cfg, robot_dir)
+    pose, _, loaded = play.prepare_robot(play_cfg, robot_dir)
     env_cfg = morph_quadruped_flat_env_cfg(play=True)
     agent_cfg = morph_quadruped_ppo_runner_cfg()
     env_cfg.scene.num_envs = 1
@@ -378,53 +384,68 @@ def sim_check(play_cfg, policy: Path | None, walk_command: float) -> bool:
     robot = raw.scene["robot"]
     tm = raw.termination_manager
     steps_per_s = round(1.0 / raw.step_dt)
+    speed = float(raw.morph_scales.speed[0])
+    stand_height = float(raw.morph_scales.base_above_feet[0])
 
     def run(act, seconds: float, label: str):
+      """(survived, forward distance [m], min base height [m], peak |torque| per joint)."""
       obs, _ = env.reset()
       start = robot.data.root_link_pos_w[0].clone()
       heading = robot.data.root_link_quat_w[0].clone()
+      low = float(start[2])
+      peak = torch.zeros_like(robot.data.joint_pos[0])
       for i in range(int(seconds * steps_per_s)):
         with torch.no_grad():
           obs, _, dones, _ = env.step(act(obs))
         if dones[0]:
           why = [t for t in tm.active_terms if bool(tm.get_term(t)[0])]
           print(f"  {label}: episode ended at {i / steps_per_s:.2f} s ({', '.join(why)})")
-          return False, None, None
+          return False, None, None, None
+        if i > steps_per_s // 2:  # Skip the landing after the spawn.
+          low = min(low, float(robot.data.root_link_pos_w[0, 2]))
+          peak = torch.maximum(peak, _joint_order_torques(robot)[0].abs())
       end = robot.data.root_link_pos_w[0]
       # Forward axis of the base at the start, in the ground plane.
       fwd = torch.zeros(3, device=end.device)
       w, x, y, z = heading.tolist()
       fwd[0], fwd[1] = 1 - 2 * (y * y + z * z), 2 * (x * y + w * z)
       fwd = fwd / torch.clamp(torch.norm(fwd), min=1e-6)
-      return True, float((end - start) @ fwd), float(end[2])
+      return True, float((end - start) @ fwd), low, peak.cpu().numpy()
 
-    zero = torch.zeros(env.unwrapped.action_space.shape, device=device)
-    print("\n=== Headless check 1: zero actions, 2 s (should just stand) ===")
-    ok, _, height = run(lambda obs: zero, 2.0, "zero actions")
-    if ok:
-      print(f"  stood for 2 s, base height {height:.3f} m")
-    else:
-      print("  -> Robot problem, not a policy problem: check the standing pose "
-            "(keyframe), masses, and that the feet are the lowest collision geoms.")
-      return False
     if policy is None:
-      print("  (no policy checkpoint found: skipping the walking check)")
+      print("  (no policy checkpoint found: skipping the simulation checks)")
       return True
-
     runner = VelocityOnPolicyRunner(env, asdict(agent_cfg), device=device)
     runner.load(str(policy), load_cfg={"actor": True}, strict=True, map_location=device)
     act = runner.get_inference_policy(device=device)
-    speed = float(raw.morph_scales.speed[0])
+
+    print("\n=== Headless check 1: policy, zero command, 3 s (should stand still) ===")
+    ok, moved, low, _ = run(act, 3.0, "standing")
+    if not ok:
+      print("  -> Can't even stand. Look at the fixed copy's keyframe in the viewer "
+            "(python -m mujoco.viewer --mjcf=<file>.temp.xml): feet on the ground, "
+            "knees the right way?")
+      return False
+    print(f"  stood 3 s: drifted {moved:+.2f} m, lowest base height {low:.3f} m "
+          f"(standing pose {stand_height:.3f} m)")
+    if low < 0.6 * stand_height:
+      print("  -> Sagged far below the standing pose: the robot is too heavy for its "
+            "legs, or the knees bend the wrong way (--xknee).")
+      return False
+
     command[0] = (walk_command, 0.0, 0.0)
     expected = walk_command * speed * 5.0
     print(f"\n=== Headless check 2: policy, {walk_command} m/s forward (Go2 units = "
           f"{walk_command * speed:.2f} m/s for this robot), 5 s ===")
-    ok, moved, height = run(act, 5.0, "policy")
+    ok, moved, low, peak = run(act, 5.0, "walking")
     if not ok:
       print("  -> Fell while walking. The policy may not be trained far enough, or the "
             "robot is outside the training sizes.")
       return False
-    print(f"  moved {moved:+.2f} m forward (ideal {expected:.2f} m), base height {height:.3f} m")
+    print(f"  moved {moved:+.2f} m forward (ideal {expected:.2f} m), lowest base height "
+          f"{low:.3f} m")
+    if loaded is not None:
+      _report_torques(loaded.fixed.motors, peak, list(robot.joint_names))
     if moved < 0.2 * expected:
       print("  -> Barely moved or went backwards. If it walked backwards, the forward "
             "axis is wrong: re-run with the opposite --forward.")
@@ -432,6 +453,24 @@ def sim_check(play_cfg, policy: Path | None, walk_command: float) -> bool:
     return True
   finally:
     shutil.rmtree(robot_dir, ignore_errors=True)
+
+
+def _report_torques(motors, peak, joint_names: list[str]) -> None:
+  """Peak torque per joint role while walking vs the MJCF's own motor limit."""
+  print("  Peak torque the policy used vs your motors (the sim gives it Go2's motors "
+        "scaled to this robot):")
+  roles = {"abduction": "hip", "hip": "thigh", "knee": "calf"}
+  for role, train_role in roles.items():
+    used = max(float(peak[i]) for i, n in enumerate(joint_names) if n.endswith(f"_{train_role}_joint"))
+    rows = [m for m in motors if m.role == role]
+    owns = [m.own_peak for m in rows if m.own_peak is not None]
+    line = f"    {role:9} used {used:6.1f} Nm, trained with up to {rows[0].expected_peak:6.1f} Nm"
+    if owns:
+      have = min(owns)
+      line += f", yours {have:6.1f} Nm"
+      if used > have:
+        line += f"  <- {used / have:.1f}x over: the real robot can't do this gait"
+    print(line)
 
 
 def latest_policy() -> Path | None:
@@ -522,7 +561,7 @@ def main() -> None:
     forward = json.loads((xml_path.parent / "play.json").read_text()).get("forward", "auto") \
       if (xml_path.parent / "play.json").is_file() else "auto"
     print_joint_table(xml_path, forward)
-    errors, *_ = run_checks(xml_path, forward, is_x_knee(xml_path.stem))
+    errors, _, _, notes = run_checks(xml_path, forward, None)
     if errors:
       print("\nConvention check: FAIL")
       for e in errors:
@@ -530,6 +569,7 @@ def main() -> None:
       raise SystemExit("Fix the file (or use it as your own MJCF: python onboard.py "
                        f"{xml_path}).")
     print("\nConvention check: PASS")
+    print("\n".join(f"  {line}" for line in notes))
     run_and_play(["--robot", xml_path.stem], play.PlayConfig(robot=xml_path.stem),
                  policy, args, auto)
     return
@@ -540,8 +580,8 @@ def main() -> None:
 
   # 1-3: structure.
   forward = args.forward or "auto"
-  x_knee = is_x_knee(xml_path.stem) if args.xknee == "auto" else args.xknee == "yes"
-  check_until_valid(xml_path, forward, x_knee, auto)
+  x_knee = None if args.xknee == "auto" else args.xknee == "yes"  # None: infer it.
+  _, pose, _ = check_until_valid(xml_path, forward, x_knee, auto)
 
   # 4: what can't be inferred, then re-check with the answers.
   while True:
@@ -552,7 +592,8 @@ def main() -> None:
         print(f"Pick one of {FORWARDS}.")
         continue
     if args.xknee == "auto":
-      x_knee = ask_yes("Do the REAR knees bend forward, like ANYmal (><)?", x_knee, auto)
+      inferred = pose["RR_calf_joint"] > 0  # The fixer's guess (knee ranges, file name).
+      x_knee = ask_yes("Do the REAR knees bend forward, like ANYmal (><)?", inferred, auto)
     robot, pose, notes = check_until_valid(xml_path, forward, x_knee, auto)
     print("Adapter decisions:")
     for line in robot.report + notes:

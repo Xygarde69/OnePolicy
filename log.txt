@@ -3,7 +3,16 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  Rough terrain scaled to robot size (bins)
+2026-10-17  vis_rough.py: viewer for the rough training terrain
+  - What: Training/vis_rough.py drops one generated robot (--seed) on the
+    chosen bin / terrain type / difficulty row of the rough grid and opens a
+    free-camera MuJoCo viewer (--bin, --kind, --row, --viewer False to just
+    print the layout).
+  - Why: inspect the per-bin terrain from the last commit by eye.
+  - Checked: --viewer False --bin 3 --row 7 --kind 2 builds the env and
+    prints the origin; the viewer window itself was not opened here.
+
+2026-10-17  Rough terrain scaled to robot size (bins) (3a65612)
   - What: tasks/velocity/terrain.py. The rough grid holds every sub-terrain
     once per leg-length bin (4 bins, 0.2-4.5x Go2, geometric): stair/noise/wave
     heights and platform widths x s_L, step width clip(0.3 s_L, 0.2, 0.75).

@@ -1,9 +1,10 @@
 "use client";
 
-import { Rocket } from "lucide-react";
+import { RotateCcw, Rocket } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { OnePolicy } from "@/components/brutal/brand";
 import { PageTitle } from "@/components/brutal/page-title";
 import { StepRail } from "@/components/brutal/step-rail";
 import { AdapterReport, type UploadRef } from "@/components/flow/adapter-report";
@@ -13,15 +14,16 @@ import { LimitRow, LimitsEditor } from "@/components/flow/limits-editor";
 import { PartsPopup, useGeometry } from "@/components/flow/parts-popup";
 import { PolicyFiles } from "@/components/flow/policy-files";
 import { type RewardEdits, RewardEditor } from "@/components/flow/reward-editor";
+import { SimView } from "@/components/flow/sim-view";
 import { TrainingView } from "@/components/flow/training-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { api, type Inspect, type RewardTable, type State, type TrainStatus, shortPath } from "@/lib/api";
+import { api, type Inspect, type PlayStatus, type RewardTable, type State, type TrainStatus, shortPath } from "@/lib/api";
 
-const STEPS = ["Upload", "Check", "Rewards", "Limits", "Conditions", "Train", "Policy"];
+const STEPS = ["Upload", "Check", "Rewards", "Limits", "Conditions", "Train", "Test it"];
 const SCRATCH = "scratch";
 
 function Panel({ title, children, hint }: { title: string; hint?: string; children: React.ReactNode }) {
@@ -58,6 +60,10 @@ export default function TrainQuadruped() {
   const [startFrom, setStartFrom] = useState(SCRATCH);
   const [status, setStatus] = useState<TrainStatus | null>(null);
   const [starting, setStarting] = useState(false);
+  const [exportOnnx, setExportOnnx] = useState(false);
+  // The robot as installed into quadrupeds/ by the last start, and the checkpoint under test.
+  const [installed, setInstalled] = useState<string | null>(null);
+  const [testing, setTesting] = useState<string | null>(null);
 
   const ok = !!inspect && inspect.errors.length === 0;
   const { geometry } = useGeometry(
@@ -88,19 +94,23 @@ export default function TrainQuadruped() {
     if (!target || !table) return;
     setStarting(true);
     try {
-      const installed = await api<{ robot: string }>("install", {
+      const result = await api<{ robot: string }>("install", {
         kind: "upload", upload: target.upload, xml: target.xml, forward: target.forward,
-        xknee: target.xknee, name, overwrite,
+        // Training again: the folder is the one this page installed.
+        xknee: target.xknee, name, overwrite: overwrite || name === installed,
       });
+      setInstalled(result.robot);
+      setTesting(null);
       setStatus(await api<TrainStatus>("train", {
-        robot: installed.robot,
+        robot: result.robot,
         fraction,
         rewards: edits,
         limits,
         condition,
         policy: startFrom === SCRATCH ? null : startFrom,
+        export_onnx: exportOnnx,
       }));
-      toast.success(`Training ${installed.robot} on this machine`);
+      toast.success(`Training ${result.robot} on this machine`);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -110,6 +120,21 @@ export default function TrainQuadruped() {
 
   const stop = async () => setStatus(await api<TrainStatus>("train_stop", {}));
   const began = status && status.phase !== "idle";
+
+  const pts = (status?.checkpoints ?? []).filter((c) => c.endsWith(".pt"));
+  const policy = testing && pts.includes(testing) ? testing : pts[pts.length - 1] ?? null;
+  const testRobot = installed ?? name;
+  const play = useCallback(
+    () => api<PlayStatus>("play", { source: "robot", robot: testRobot, policy, terrain: "flat", drive: true }),
+    [testRobot, policy],
+  );
+  // Not good enough yet: back to the rewards, the next run starting from this checkpoint.
+  const trainAgain = async () => {
+    await api<PlayStatus>("stop", {}).catch(() => {});
+    if (policy) setStartFrom(policy);
+    if (status) setStatus({ ...status, phase: "idle" });
+    setStep(2);
+  };
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-10">
@@ -186,7 +211,7 @@ export default function TrainQuadruped() {
                 <TrainingView status={status} onStop={stop} />
                 {!status.running && (
                   <div className="flex gap-3">
-                    <Button onClick={() => setStep(6)}>Next: policy files →</Button>
+                    <Button onClick={() => setStep(6)}>Next: test it in the sim →</Button>
                     <Button variant="outline" onClick={() => setStatus({ ...status, phase: "idle" })}>Set up another run</Button>
                   </div>
                 )}
@@ -216,12 +241,15 @@ export default function TrainQuadruped() {
                         <SelectItem value={SCRATCH}>Scratch (random weights)</SelectItem>
                         {state?.checkpoints.map((c) => (
                           <SelectItem key={c} value={c}>
-                            {c === state.onepolicy ? "OnePolicy.pt (fine-tune it)" : shortPath(c)}
+                            {c === state.onepolicy ? <><OnePolicy /> (fine-tune it)</> : shortPath(c)}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
+                  <label className="flex items-center gap-3 text-sm font-bold">
+                    <Switch checked={exportOnnx} onCheckedChange={setExportOnnx} /> Also export policy.onnx at every checkpoint
+                  </label>
                 </div>
                 <div className="brutal flex flex-col gap-3 bg-yellow p-5">
                   <span className="font-heading text-2xl uppercase">Ready?</span>
@@ -243,8 +271,44 @@ export default function TrainQuadruped() {
         )}
 
         {step === 6 && (
-          <Panel key="policy" title="7 · Your policy" hint="Download the checkpoints (.pt for rsl_rl, policy.onnx for deployment), or import one.">
-            <PolicyFiles checkpoints={status?.checkpoints ?? []} />
+          <Panel
+            key="policy"
+            title="7 · Test it"
+            hint="Your robot in the sim with this run's policy: drive it with WASD. Not walking well yet? Train again from this checkpoint, with changed rewards or limits if you like."
+          >
+            {policy && testRobot ? (
+              <>
+                <div className="brutal flex flex-wrap items-end gap-4 bg-white p-4">
+                  <div className="flex flex-col gap-1">
+                    <span className="font-mono text-[11px] font-bold uppercase">Checkpoint</span>
+                    <Select value={policy} onValueChange={setTesting}>
+                      <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {[...pts].reverse().map((c) => (
+                          <SelectItem key={c} value={c}>{c.split("/").pop()}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button variant="ink" className="ml-auto" onClick={trainAgain}>
+                    <RotateCcw /> Not good yet? Train again from it
+                  </Button>
+                </div>
+                <SimView key={policy} start={play} label={testRobot} />
+              </>
+            ) : (
+              <div className="brutal bg-white p-5 font-medium">
+                {testRobot
+                  ? "No checkpoint of this run yet: one is saved every “checkpoint every” iterations."
+                  : "Set the robot name in step 6 to test this run."}
+              </div>
+            )}
+            <details className="brutal bg-white">
+              <summary className="cursor-pointer p-3 text-sm font-bold uppercase">Download or import checkpoints</summary>
+              <div className="border-t-3 border-ink p-4">
+                <PolicyFiles checkpoints={status?.checkpoints ?? []} />
+              </div>
+            </details>
           </Panel>
         )}
       </AnimatePresence>

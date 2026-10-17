@@ -3,7 +3,22 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  Web UI: OnePolicy™ wordmark; preloaded robots load on click
+2026-10-17  Train page: test the run in the sim, train again; ONNX off by default
+  - What: train.py --export-onnx (default True; runner.save skips the
+    policy.onnx export when False). server.py passes --export-onnx False
+    unless the train request sets export_onnx (a switch on the setup card,
+    off by default). The train page's last step is now "Test it": the
+    installed robot walks in the embedded sim (WASD) with a checkpoint of
+    the run (latest by default, pickable), and "Not good yet? Train again
+    from it" goes back to the rewards with that checkpoint as the start
+    (re-installing the same robot folder overwrites it). Download / import
+    moved into a collapsible section below.
+  - Why: users should try their policy and iterate before deploying; an
+    ONNX export at every checkpoint was unneeded work for that.
+  - Checked: tsc and next build clean; train.py --help lists --export-onnx.
+    Not run end to end (needs a training run on the GPU).
+
+2026-10-17  Web UI: OnePolicy™ wordmark; preloaded robots load on click (0f7ae35)
   - What: components/brutal/brand.tsx renders "OnePolicy" in Pacifico
     script with a raised ™, used everywhere the name appears (header, nav,
     landing card and copy, page kickers / titles, policy selects, popups;

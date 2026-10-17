@@ -483,6 +483,9 @@ def api_train(body: dict) -> dict:
       raise ApiError("Share of envs on your robot must be in (0, 1).")
     cmd += ["--generalise", str(fraction), "--generalise-robots", find_robot(robot).stem]
   cmd += _resume_args(body.get("policy"))
+  # ONNX only on request: the run is tried out in the sim from its .pt files.
+  if not body.get("export_onnx"):
+    cmd += ["--export-onnx", "False"]
 
   with _train_lock:
     if _train["proc"] is not None and _train["proc"].poll() is None:

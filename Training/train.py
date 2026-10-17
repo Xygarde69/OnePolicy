@@ -89,6 +89,9 @@ class TrainConfig:
   enable_nan_guard: bool = False
   plot: bool = False
   """Plot the mean episode reward per iteration to <log_dir>/mean_reward.png."""
+  export_onnx: bool = True
+  """Export <log_dir>/policy.onnx at every checkpoint (the web UI turns it off:
+  its runs are played from the .pt checkpoints)."""
   generalise: float = 0.0
   """Fraction of envs, in [0, 1), split equally between proxies of
   generalise_robots (generation/proxy.py); the rest are generated robots."""
@@ -194,6 +197,7 @@ def run_train(cfg: TrainConfig, log_dir: Path,
   env_cfg = asdict(cfg.env)
 
   runner = VelocityOnPolicyRunner(env, runner_cfg, str(log_dir), device)
+  runner.export_onnx = cfg.export_onnx
 
   runner.add_git_repo_to_log(__file__)
   if resume_path is not None:

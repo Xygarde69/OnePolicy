@@ -36,6 +36,8 @@ SPLIT_TERMS = ("track_linear_velocity", "track_angular_velocity",
 
 class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
   env: RslRlVecEnvWrapper
+  # Export policy.onnx next to every saved checkpoint (train.py --export-onnx).
+  export_onnx: bool = True
 
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
@@ -206,6 +208,8 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
 
   def save(self, path: str, infos=None):
     super().save(path, infos)
+    if not self.export_onnx:
+      return
     policy_path = path.split("model")[0]
     filename = "policy.onnx"
     self.export_policy_to_onnx(policy_path, filename)

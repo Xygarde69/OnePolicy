@@ -3,6 +3,28 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
+2026-10-17  Rough terrain scaled to robot size (bins)
+  - What: tasks/velocity/terrain.py. The rough grid holds every sub-terrain
+    once per leg-length bin (4 bins, 0.2-4.5x Go2, geometric): stair/noise/wave
+    heights and platform widths x s_L, step width clip(0.3 s_L, 0.2, 0.75).
+    Grid is 8 rows x 28 cols of 10 m patches. New startup event
+    assign_terrain_bins (after morphology) puts each robot on the columns of
+    its own bin, terrain types shared out evenly; the terrain_levels
+    curriculum then stays inside the bin. Play: reset event picks a random
+    row/type within the bin (replaces randomize_terrain).
+  - Why: the same 10 cm stairs were a wall for a 0.2x robot and nothing for a
+    4x one. The terrain is one static model shared by all envs, so it can't be
+    scaled per env; bins are the cheap approximation.
+  - Cost: geoms 2124 -> 2660 (first try, 6 bins x 10 rows with 0.08 m steps,
+    gave 7624 and OOMed a 6 GB GPU at 2048 envs: per-env model fields scale
+    with ngeom). nconmax stays 64. 2048 envs fit (5.3 GB), 3.3 s/iteration.
+  - Not done: the height-scan ray grid (1.6 x 1.0 m) is still the same for
+    every robot; the sensor's pattern is shared inside mjlab.
+  - Checked: train_test.py --task rough, 40 robots, 3 s (6-bin version): no
+    crash/NaN except one init nconmax overflow, which led to the smaller grid;
+    the final 4-bin grid is only checked by the training run starting and
+    stepping at 2048 envs (rough task, --plot).
+
 2026-10-17  Revert the training setup to the one OnePolicy was trained with (40fec60)
   - What: rewards.py and velocity_env_cfg.py back to 40fec60: action_rate_l2
     / action_acc_l2 use mjlab's unscaled terms again; scaled_action_rate_l2,

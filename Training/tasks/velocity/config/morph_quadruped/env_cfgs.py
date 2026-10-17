@@ -17,7 +17,6 @@ from assets.morph_quadruped.constants import (
 )
 from generation.bank import BANK_FILE
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import TerminationTermCfg
 from mjlab.managers.event_manager import EventTermCfg
@@ -25,6 +24,7 @@ from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
 
 import tasks.velocity.mdp as morph_mdp
 from tasks.velocity.mdp import UniformVelocityCommandCfg
+from tasks.velocity.terrain import assign_terrain_bins
 from tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
 TerrainType = Literal["rough", "obstacles"]
@@ -56,6 +56,7 @@ def morph_quadruped_rough_env_cfg(
         "nominal_leg_length": NOMINAL_LEG_LENGTH,
       },
     ),
+    "terrain_bins": EventTermCfg(func=assign_terrain_bins, mode="startup"),
     **cfg.events,
   }
 
@@ -161,15 +162,10 @@ def morph_quadruped_rough_env_cfg(
     cfg.events.pop("push_robot", None)
     cfg.curriculum = {}
     cfg.events["randomize_terrain"] = EventTermCfg(
-      func=envs_mdp.randomize_terrain,
-      mode="reset",
-      params={},
-    )
+      func=assign_terrain_bins, mode="reset", params={"randomize": True})
 
     if cfg.scene.terrain is not None:
       if cfg.scene.terrain.terrain_generator is not None:
-        cfg.scene.terrain.terrain_generator.curriculum = False
-        cfg.scene.terrain.terrain_generator.num_cols = 5
         cfg.scene.terrain.terrain_generator.num_rows = 5
         cfg.scene.terrain.terrain_generator.border_width = 10.0
 

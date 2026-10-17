@@ -5,7 +5,6 @@ Robot-specific configurations call the factory and customize as needed.
 """
 
 import math
-from dataclasses import replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
@@ -24,11 +23,11 @@ from mjlab.scene import SceneCfg
 from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.terrains import TerrainEntityCfg
-from mjlab.terrains.config import ROUGH_TERRAINS_CFG
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
 import tasks.velocity.mdp as mdp
+from tasks.velocity.terrain import scaled_rough_terrain_cfg
 from tasks.velocity.mdp import UniformVelocityCommandCfg
 
 
@@ -496,7 +495,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     scene=SceneCfg(
       terrain=TerrainEntityCfg(
         terrain_type="generator",
-        terrain_generator=replace(ROUGH_TERRAINS_CFG),
+        terrain_generator=scaled_rough_terrain_cfg(),
         max_init_terrain_level=5,
       ),
       sensors=(terrain_scan,),

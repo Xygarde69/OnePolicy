@@ -36,7 +36,7 @@ Commit hashes refer to the commit that made the change.
     outline thickness (drei's is in pixels), generator decorations of fixed
     size dwarfing small robots (previews use collision geoms).
 
-2026-10-17  Web server API for the new UI (Web/server.py, Web/geometry.py)
+2026-10-17  Web server API for the new UI (Web/server.py, Web/geometry.py) (973338e)
   - What: server.py serves Web/ui/out (old page at /legacy, and at / when
     there is no build) and adds: /api/geometry (geometry.py: visible geoms of
     a bundled / generated / uploaded robot in its default pose, world frame,

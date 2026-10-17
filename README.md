@@ -69,6 +69,7 @@ seen the later command curriculum (fast commands, from iteration 5000).
 - [Robot convention and the adapter](#robot-convention-and-the-adapter)
 - [Robot compatibility](#robot-compatibility)
 - [Adding your own robot](#adding-your-own-robot)
+- [Web UI](#web-ui)
 - [Morphology viewer](#morphology-viewer)
 - [How per-environment robots work](#how-per-environment-robots-work)
 - [Known limitations](#known-limitations)
@@ -100,6 +101,10 @@ Morphology/
 │       │   └── morphology.py         # startup event: env i gets robot i
 │       ├── rl/runner.py              # PPO runner (+ ONNX export)
 │       └── config/morph_quadruped/   # env + PPO config (Go2's, robot swapped)
+├── Web/                              # browser UI: train your robot, or walk any robot with OnePolicy
+│   ├── server.py                     # stdlib HTTP server + JSON API (runs train.py / play.py here)
+│   ├── geometry.py                   # robot geoms -> three.js for the 3D previews
+│   └── ui/                           # Next.js + TypeScript + Tailwind + shadcn/ui front end
 ├── Model_generation/                 # stand-alone generator + MuJoCo viewer
 │   ├── generate_and_view.py
 │   └── quadruped_generator.py
@@ -522,6 +527,59 @@ robots carry the tag in their MJCF model name (`morph_quadruped_<seed>_xknee`).
 The logic lives in `generation/knees.py`.
 
 ---
+
+## Web UI
+
+A neo-brutalist browser front end for the whole project. Everything runs on
+your machine: `Web/server.py` serves the page and starts `train.py` /
+`play.py` on your GPU.
+
+```bash
+sudo pacman -S --needed npm            # Arch; any Node.js >= 20 with npm works
+cd Web/ui && npm install && npm run build && cd ..   # once, and after UI changes
+../.venv/bin/python server.py          # then open http://localhost:8000
+```
+
+Without a build, `server.py` serves the old single-file page (also always at
+`/legacy`). To work on the UI, run `npm run dev` in `Web/ui` next to
+`server.py`: the dev server (port 3000) proxies `/api` to port 8000.
+
+**Train your own robot → Quadruped**
+
+1. Upload the robot folder (drag and drop; an animated file tree shows what
+   goes up).
+2. Convention check: the fixer + adapter run on it; errors come with a FIX
+   hint, the joint table marks bad joints, and the XML can be edited and
+   re-checked in the page. On success a popup shows its base link, a thigh
+   and a calf.
+3. Rewards: every term of `velocity_env_cfg.py` with its weight, parameters
+   and docstring; weights and parameters are editable (terms whose weight the
+   curriculum sets are shown but locked).
+4. Limits: envs, iterations, checkpoint interval, learning rate, episode
+   length, termination thresholds, randomisation range, `><` share.
+5. Conditions: a filter on the generated robots that train next to yours
+   (`--morphology.condition`), over mass, link lengths, COM, PD gains, torque
+   limits, … Test it on 32 seeds before training.
+6. Train: installs the robot into `quadrupeds/<name>/` and runs
+   `train.py --generalise <share> --generalise-robots <name> --plot …`, from
+   scratch or fine-tuning a checkpoint (OnePolicy by default). Press **X** for
+   live stats (reward, episode length, action std, per-term rewards, log).
+7. Policy: download the run's `model_*.pt` / `policy.onnx`, or import a `.pt`.
+
+**OnePolicy ;) → Quadruped**
+
+1. Pick a bundled robot (all spinning in 3D), generate one (seed + sliders
+   for size, body, legs, masses and knee layout; unset sliders keep the
+   seed's random draw), or upload your own (with the convention in short).
+2. Its parts popup, then a terrain (only flat works; the rest are marked
+   under construction).
+3. `play.py --viewer viser --command-port …` runs it with the chosen policy
+   (`OnePolicy/OnePolicy.pt` by default); the viewer is embedded and you drive
+   with **W/S** (forward/back), **A/D** (sideways) and **←/→** (turn). Speeds
+   are Go2 units, scaled to the robot. Switch to camera mode to orbit the view.
+
+"Custom morphology" in both flows is under construction: OnePolicy is
+12-DoF quadrupeds of any size.
 
 ## Morphology viewer
 

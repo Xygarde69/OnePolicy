@@ -3,7 +3,39 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  Froude-scale action_rate_l2 / action_acc_l2; log key terms per size third
+2026-10-17  Web harness: load a quadruped, fix it in the browser, walk it with OnePolicy
+  - What: Web/ (new folder): server.py (stdlib http.server, no new
+    dependencies, binds 127.0.0.1:8000 by default) + index.html. Training/
+    onboard.py: the engine, also usable as a CLI. Inference only: a
+    checkpoint is loaded (actor only), nothing is trained.
+  - Flow: pick a checkpoint; pick a robot: existing (../quadrupeds: Spot,
+    ANYmal, Barkour, ...), random generated (seed), or your own robot folder
+    (XML + meshes, uploaded to Web/workspace/<id>/, git-ignored). Your own
+    robot: joint table (leg / role guess per joint, bad rows red) + the
+    adapter's convention check with a FIX line per error; edit the XML in the
+    page, save (original kept as .orig), re-check until it passes; forward
+    axis and "><" knees; install into quadrupeds/<name>/ (XML, assets/,
+    play.json, .xml.orig). Then a headless check (onboard.py: 2 s zero
+    actions must stand, 5 s of the policy at a fixed speed must move
+    forward >= 20 % of ideal) and Walk: play.py --viewer viser, embedded in
+    the page as an iframe, Stop kills it.
+  - Why: adding a robot meant reading the convention in README.md and
+    reading adapt.py's errors in a terminal; the harness shows what the
+    adapter infers per joint and loops edit -> check in one place.
+  - Checked (server running, over HTTP): robot list and 81 checkpoints;
+    barkour_vb fails with the missing-standing-pose hint and a keyframe
+    template; anymal_c passes with the "><" pose. Uploaded the Spot folder,
+    spot_arm.xml fails (19 hinges, extra-joint fix); removing the arm in the
+    page's text then failed on the keyframe size (new specific hint);
+    removing the keyframe passed; install wrote 54 assets and the installed
+    copy passes and shows up as a robot; second install refused without
+    overwrite; a ../ path is refused. Test robots and uploads deleted.
+    CLI: spot_arm fails with the right hint (after fixing the hint order,
+    "free joint" also matched the 12-hinge message); go2 passed and
+    installed. NOT yet run: the headless sim check and the viewer
+    (GPU; stopped while a training run was using it).
+
+2026-10-17  Froude-scale action_rate_l2 / action_acc_l2; log key terms per size third (1aca06b)
   - Why: run 2026-10-17_05-05-36 (4096 envs, commit 40fec60) looked stuck at
     a mean reward of ~28 from iteration ~135 to ~540. Mostly it is not: the
     per-robot command curriculum raised command_levels 0.42 -> 0.74 while

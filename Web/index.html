@@ -1,0 +1,237 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>OnePolicy Harness</title>
+<style>
+  body { font-family: sans-serif; max-width: 1200px; margin: 1em auto; padding: 0 1em; }
+  section { border: 1px solid #aaa; padding: 0.6em 1em; margin: 0.8em 0; }
+  h2 { margin: 0.2em 0 0.5em; font-size: 1.1em; }
+  table { border-collapse: collapse; font-size: 0.85em; }
+  td, th { border: 1px solid #ccc; padding: 2px 6px; text-align: left; }
+  tr.bad { background: #fdd; }
+  pre { background: #f4f4f4; padding: 0.5em; max-height: 400px; overflow: auto; font-size: 0.8em; }
+  textarea { width: 100%; height: 360px; font-family: monospace; font-size: 0.8em; }
+  .err { color: #b00; white-space: pre-wrap; }
+  .ok { color: #070; font-weight: bold; }
+  .hidden { display: none; }
+  iframe { width: 100%; height: 600px; border: 1px solid #888; }
+  button { margin: 0.2em 0.3em 0.2em 0; }
+</style>
+</head>
+<body>
+<h1>OnePolicy Harness</h1>
+<p>Load a quadruped, check it, make it walk with the trained policy. Inference only, nothing is trained.</p>
+
+<section>
+  <h2>1. Policy</h2>
+  <select id="policy"></select>
+</section>
+
+<section>
+  <h2>2. Robot</h2>
+  <label><input type="radio" name="src" value="robot" checked> Existing robot</label>
+  <select id="robot"></select><br>
+  <label><input type="radio" name="src" value="random"> Random generated robot</label>
+  seed <input id="seed" size="12" placeholder="random"><br>
+  <label><input type="radio" name="src" value="upload"> Your own robot</label>
+  folder (XML + meshes): <input type="file" id="folder" webkitdirectory multiple>
+  or files: <input type="file" id="files" multiple>
+  <span id="uploadInfo"></span>
+  <select id="xmlPick" class="hidden"></select>
+  <br><button id="inspectBtn">Inspect / check</button>
+  <div id="status"></div>
+</section>
+
+<section id="inspect" class="hidden">
+  <h2>3. Convention check</h2>
+  <div id="summary"></div>
+  <div id="errors" class="err"></div>
+  <table id="joints"></table>
+  <h3>Adapter decisions</h3>
+  <ul id="report"></ul>
+  <details><summary>Standing pose</summary><table id="pose"></table></details>
+
+  <div id="editor" class="hidden">
+    <h3>Your robot's XML: edit it here, then save. The check runs again.</h3>
+    <textarea id="xmlText" spellcheck="false"></textarea><br>
+    Forward axis
+    <select id="forward"><option>auto</option><option>+x</option><option>-x</option><option>+y</option><option>-y</option></select>
+    <label><input type="checkbox" id="xknee"> rear knees bend forward (ANYmal-style &gt;&lt;)</label>
+    <button id="saveBtn">Save &amp; re-check</button>
+    <h3>Install</h3>
+    name <input id="name" size="20"> <label><input type="checkbox" id="overwrite"> overwrite</label>
+    <button id="installBtn">Install into quadrupeds/</button>
+    <span id="installInfo"></span>
+  </div>
+</section>
+
+<section id="run" class="hidden">
+  <h2>4. Run</h2>
+  <div id="runTarget"></div>
+  forward speed (Go2 m/s, scaled to the robot) <input id="speed" size="5" value="0.5">
+  <button id="checkBtn">Headless check (stand + walk)</button>
+  <button id="playBtn">Walk in the viewer</button>
+  <label><input type="checkbox" id="randomCmd"> random commands instead of fixed speed</label>
+  <button id="stopBtn">Stop</button>
+  <div id="checkResult"></div>
+  <pre id="checkLog" class="hidden"></pre>
+  <div id="playInfo"></div>
+  <iframe id="viewer" class="hidden"></iframe>
+  <details><summary>viewer log</summary><pre id="playLog"></pre></details>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+let upload = null;          // {upload, xmls}
+let runTarget = null;       // {source: 'robot'|'random', robot, seed}
+let pollTimer = null;
+
+async function api(path, body) {
+  const r = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                               body: JSON.stringify(body || {})});
+  const out = await r.json();
+  if (!r.ok) throw new Error(out.error || r.statusText);
+  return out;
+}
+function status(msg, bad) { $('status').innerHTML = bad ? `<span class="err">${esc(msg)}</span>` : esc(msg); }
+function esc(s) { return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+const src = () => document.querySelector('input[name=src]:checked').value;
+
+async function init() {
+  const s = await api('/api/state');
+  $('policy').innerHTML = s.checkpoints.length
+    ? s.checkpoints.map(c => `<option>${esc(c)}</option>`).join('')
+    : '<option value="">(no checkpoint found: zero actions)</option>';
+  $('robot').innerHTML = s.robots.map(r => `<option>${esc(r)}</option>`).join('');
+}
+
+function readFile(f) {
+  return new Promise((res, rej) => {
+    const rd = new FileReader();
+    rd.onload = () => res(rd.result.split(',')[1] || '');
+    rd.onerror = rej;
+    rd.readAsDataURL(f);
+  });
+}
+async function doUpload(fileList) {
+  const files = [];
+  status(`reading ${fileList.length} files...`);
+  for (const f of fileList) files.push({path: f.webkitRelativePath || f.name, data: await readFile(f)});
+  status('uploading...');
+  upload = await api('/api/upload', {files});
+  $('xmlPick').innerHTML = upload.xmls.map(x => `<option>${esc(x)}</option>`).join('');
+  $('xmlPick').classList.remove('hidden');
+  $('uploadInfo').textContent = `${files.length} files uploaded; robot file:`;
+  document.querySelector('input[value=upload]').checked = true;
+  status('uploaded; pick the robot XML (not scene.xml) and press Inspect');
+}
+$('folder').onchange = e => doUpload(e.target.files).catch(e => status(e.message, true));
+$('files').onchange = e => doUpload(e.target.files).catch(e => status(e.message, true));
+
+function inspectBody(extra) {
+  if (src() === 'robot') return {kind: 'robot', robot: $('robot').value, ...extra};
+  return {kind: 'upload', upload: upload.upload, xml: $('xmlPick').value,
+          forward: $('forward').value, xknee: $('xknee').checked, ...extra};
+}
+
+function showInspect(r) {
+  $('inspect').classList.remove('hidden');
+  const t = r.table;
+  $('summary').innerHTML = (t ? `<b>${esc(t.file)}</b>: ${t.joints} joints, ${t.bodies} bodies, ` +
+      `${t.mass.toFixed(2)} kg, legs found ${t.legs}, forward ${esc(t.forward)}. ` : esc(r.table_error || '')) +
+      (r.errors.length ? '<span class="err">FAIL</span>' : '<span class="ok">PASS</span>');
+  $('errors').textContent = r.errors.join('\n\n');
+  $('joints').innerHTML = !t ? '' : '<tr><th>#</th><th>joint</th><th>type</th><th>body</th><th>axis (base)</th><th>range</th><th>guess</th></tr>' +
+    t.rows.map(x => `<tr class="${x.ok ? '' : 'bad'}"><td>${x.index}</td><td>${esc(x.name)}</td><td>${x.type}</td>` +
+      `<td>${esc(x.body)}</td><td>${x.axis}</td><td>${x.range}</td><td>${esc(x.guess)}</td></tr>`).join('');
+  $('report').innerHTML = r.report.map(l => `<li>${esc(l)}</li>`).join('');
+  $('pose').innerHTML = r.pose ? Object.entries(r.pose).map(([k, v]) => `<tr><td>${k}</td><td>${v.toFixed(3)}</td></tr>`).join('') : '';
+  const own = src() === 'upload';
+  $('editor').classList.toggle('hidden', !own);
+  if (own) {
+    if (r.text !== undefined) $('xmlText').value = r.text;
+    $('forward').value = r.forward;
+    $('xknee').checked = r.xknee;
+    if (!$('name').value) $('name').value = r.default_name || '';
+    $('installBtn').disabled = r.errors.length > 0;
+  }
+  if (src() === 'robot' && !r.errors.length) setRunTarget({source: 'robot', robot: $('robot').value});
+}
+
+$('inspectBtn').onclick = async () => {
+  try {
+    if (src() === 'random') {
+      setRunTarget({source: 'random', seed: $('seed').value || Math.floor(Math.random() * 2 ** 31)});
+      $('inspect').classList.add('hidden');
+      status('random robots always follow the convention; go to Run');
+      return;
+    }
+    if (src() === 'upload' && !upload) return status('upload your robot folder first', true);
+    status('checking...');
+    showInspect(await api('/api/inspect', inspectBody()));
+    status('');
+  } catch (e) { status(e.message, true); }
+};
+$('saveBtn').onclick = async () => {
+  try { status('saving + checking...'); showInspect(await api('/api/save', inspectBody({text: $('xmlText').value}))); status('saved'); }
+  catch (e) { status(e.message, true); }
+};
+$('forward').onchange = $('xknee').onchange = () => $('inspectBtn').onclick();
+$('installBtn').onclick = async () => {
+  try {
+    const r = await api('/api/install', inspectBody({name: $('name').value, overwrite: $('overwrite').checked}));
+    $('installInfo').innerHTML = `<span class="ok">installed as ${esc(r.robot)}</span> (${esc(r.path)})`;
+    await init();
+    $('robot').value = r.robot;
+    setRunTarget({source: 'robot', robot: r.robot});
+  } catch (e) { $('installInfo').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
+
+function setRunTarget(t) {
+  runTarget = t;
+  $('run').classList.remove('hidden');
+  $('runTarget').innerHTML = t.source === 'random' ? `Random robot, seed <b>${t.seed}</b>` : `Robot <b>${esc(t.robot)}</b>`;
+}
+const runBody = extra => ({...runTarget, policy: $('policy').value, ...extra});
+
+$('checkBtn').onclick = async () => {
+  $('checkResult').textContent = 'running headless check (can take a minute)...';
+  $('checkLog').classList.add('hidden');
+  try {
+    const r = await api('/api/check', runBody({command: $('speed').value}));
+    $('checkResult').innerHTML = r.ok ? '<span class="ok">PASS</span>' : '<span class="err">FAIL (see log)</span>';
+    $('checkLog').textContent = r.log;
+    $('checkLog').classList.remove('hidden');
+  } catch (e) { $('checkResult').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
+$('playBtn').onclick = async () => {
+  try {
+    showPlay(await api('/api/play', runBody({command: $('randomCmd').checked ? '' : $('speed').value})));
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => showPlay(await api('/api/play_status')), 1500);
+  } catch (e) { $('playInfo').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
+$('stopBtn').onclick = async () => { clearInterval(pollTimer); showPlay(await api('/api/stop')); };
+
+function showPlay(s) {
+  $('playLog').textContent = s.log;
+  const url = s.viser_port ? `http://${location.hostname}:${s.viser_port}` : null;
+  if (s.running && url) {
+    $('playInfo').innerHTML = `walking: <a href="${url}" target="_blank">${url}</a>`;
+    if ($('viewer').src !== url + '/') { $('viewer').src = url; }
+    $('viewer').classList.remove('hidden');
+  } else if (s.running) {
+    $('playInfo').textContent = 'starting the simulation (builds the robot, loads the policy)...';
+  } else {
+    $('playInfo').innerHTML = s.exit_code == null ? 'stopped' : `<span class="err">viewer exited (code ${s.exit_code}); see the viewer log</span>`;
+    $('viewer').classList.add('hidden');
+    $('viewer').removeAttribute('src');
+    clearInterval(pollTimer);
+  }
+}
+
+init().catch(e => status(e.message, true));
+</script>
+</body>
+</html>

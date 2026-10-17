@@ -3,7 +3,41 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  Web harness: load a quadruped, fix it in the browser, walk it with OnePolicy
+2026-10-17  Clamp s_L to [0.5, 2] in action_rate_l2 / action_acc_l2
+  - Why: run 2026-10-17_06-24-35 (4096 envs, commit 1aca06b, robot seed
+    1533410166), the first with the Froude-scaled smoothness terms, stalled
+    the large leg-length third. Mean return per third (small / medium /
+    large), iterations 900-999: 28 / 38 / 15; at 1600: 32 / 40 / 18. The
+    run before (2026-10-17_05-05-36, unscaled, other seed): 29 / 34 / 34.
+    Per-step smoothness cost at iteration ~1600: -0.11 / -0.35 / -1.31 per
+    s (rate + acc) vs ~1.4 tracking for every third, so the large robots
+    paid as much as their whole tracking reward. Large-vs-medium smoothness
+    gap ~0.96 per s x 0.02 s x ~900 steps = ~17 of the 22-point return gap.
+  - Cause: the terms measure the exploration noise, not the gait. With
+    sampled actions the expected noise cost is 12 x 2 sigma^2 x 0.05 (rate)
+    and 12 x 6 sigma^2 x 0.01 (acc): 1.20 / 0.72 at sigma 1 vs logged
+    1.16 / 0.72 for the medium third at iteration 0; 0.24 / 0.14 at sigma
+    0.44 vs logged 0.23 / 0.12 at 1600. The large/medium and medium/small
+    ratios stayed ~6.5x from iteration 0 to 1600, so the raw action change
+    is the same for every size. The policy std is shared, so the large
+    robots cannot remove it, and the s_L / s_L^2 factors (s_L ~0.17-4.9)
+    just multiply noise. The caveat in the 1aca06b entry ("if the large
+    third stalls ..., cap the multiplier") came true; std fell only 0.83 ->
+    0.46. The motivating small-third drop (26 -> 21) was a dip in the
+    100-episode window: the 100-iteration means of 2026-10-17_05-05-36 rise
+    steadily 21 -> 29.
+  - Fix: rewards.py ACTION_SMOOTHNESS_SCALE_RANGE = (0.5, 2.0);
+    _action_smoothness_scale clamps s_L to it, used by
+    scaled_action_rate_l2 (x s_L) and scaled_action_acc_l2 (x s_L^2). The
+    noise-cost spread between the extreme robots drops from ~29x / ~830x to
+    4x / 16x; robots with s_L in [0.5, 2] keep the Go2-unit scaling. Same
+    weights.
+  - Checked: train_test.py smoke test (2 robots, 3 s, survived, no
+    crash/NaN). Run 2026-10-17_06-24-35 stopped at iteration ~1660;
+    restarted with the same robots (--morphology.seed 1533410166). Compare
+    Morphology/mean_reward_* and Morphology/action_*_large against it.
+
+2026-10-17  Web harness: load a quadruped, fix it in the browser, walk it with OnePolicy (7acdf95)
   - What: Web/ (new folder): server.py (stdlib http.server, no new
     dependencies, binds 127.0.0.1:8000 by default) + index.html. Training/
     onboard.py: the engine, also usable as a CLI. Inference only: a

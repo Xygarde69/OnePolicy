@@ -3,7 +3,21 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  MJCF fixer: <robot>.temp.xml with the fixes and what to change in your file
+2026-10-17  Publish the one policy: OnePolicy/OnePolicy.pt
+  - What: OnePolicy/ (new): OnePolicy.pt = Training/logs/.../2026-10-17_05-05-36/
+    model_1200.pt (sha256 4f825bdd...), OnePolicy.onnx = that run's
+    policy.onnx (exported with the same checkpoint, sha256 ee5b91c6...),
+    params/env.yaml + agent.yaml and morphology_seed.txt of the run. README:
+    "The policy" section says this is OnePolicy, plus the layout tree, the
+    quick start and the compatibility table pointing at it.
+  - Why: the policy only existed in the git-ignored logs; it is the only
+    checkpoint left (see the review entry below), so it is the one to share.
+  - Checked: no .pt / .onnx is tracked or in any commit of any branch (git
+    ls-files, git log --all --name-only), so this is the only policy on
+    GitHub; the other runs' policy.onnx files stay local in Training/logs/.
+    The checkpoint loads (iter 1200, actor + critic + optimizer).
+
+2026-10-17  MJCF fixer: <robot>.temp.xml with the fixes and what to change in your file (dd6f0a5)
   - What: generation/mjcf_fix.py (new). fix_mjcf() writes <stem>.temp.xml
     next to the robot MJCF (git-ignored), in the robot's own names, every
     change marked "<!-- OnePolicy: ... -->" with what to change in your

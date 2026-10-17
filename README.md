@@ -32,10 +32,35 @@ automatically.
                  └─────────────────────────────────────────────────────────────────────┘
 ```
 
+## The policy: `OnePolicy/OnePolicy.pt`
+
+**`OnePolicy/OnePolicy.pt` is OnePolicy**: the one trained policy in this
+repository, and the only one published. Use it for everything (playing,
+onboarding a robot, the web harness) unless you train your own.
+
+| | |
+|---|---|
+| File | `OnePolicy/OnePolicy.pt` (rsl_rl checkpoint, actor + critic + optimizer) and `OnePolicy/OnePolicy.onnx` (actor only, for deployment) |
+| Source run | `2026-10-17_05-05-36`, checkpoint `model_1200.pt` (1200 PPO iterations) |
+| Code | commit `40fec60` |
+| Training | 4096 generated quadrupeds (1/4-4x Go2, `>>` and `><` knees), flat ground, robot seed `1437162221` (`OnePolicy/morphology_seed.txt`) |
+| Config | `OnePolicy/params/env.yaml`, `OnePolicy/params/agent.yaml` |
+| Observations | 51 actor inputs (with `knee_direction`); older checkpoints don't load |
+
+```bash
+cd Training
+$PY play.py --robot spot --policy ../OnePolicy/OnePolicy.pt
+```
+
+Results on the bundled robots are in [Robot compatibility](#robot-compatibility).
+It is an early checkpoint: it walks every bundled robot at 0.5 m/s but has not
+seen the later command curriculum (fast commands, from iteration 5000).
+
 ---
 
 ## Contents
 
+- [The policy](#the-policy-onepolicyonepolicypt)
 - [Repository layout](#repository-layout)
 - [Setup](#setup)
 - [Quick start](#quick-start)
@@ -56,6 +81,7 @@ automatically.
 
 ```
 Morphology/
+├── OnePolicy/                        # THE policy: OnePolicy.pt (+ .onnx, params/)
 ├── Training/                         # OnePolicy: training and playing
 │   ├── train.py                      # generate N robots, then train one policy
 │   ├── play.py                       # play the policy on one robot
@@ -139,7 +165,10 @@ cd ~/Documents/Projects/Morphology/Training
 # Train on 4096 random quadrupeds (one per env), flat ground
 $PY train.py --num-envs 4096
 
-# Play the newest policy on Spot
+# Play OnePolicy on Spot
+$PY play.py --robot spot --policy ../OnePolicy/OnePolicy.pt
+
+# … or the newest checkpoint of your own training runs
 $PY play.py --robot spot
 
 # … on a fresh random robot, with a specific checkpoint
@@ -415,7 +444,8 @@ angle is `q_yours − offset` (`FixedMjcf.joint_offsets`, printed per joint).
 ## Robot compatibility
 
 The table comes from `onboard.py --robot <name> --yes --no-viewer` with
-`2026-10-17_05-05-36/model_1200.pt` (an early checkpoint, 1200 iterations).
+`2026-10-17_05-05-36/model_1200.pt`, i.e. `OnePolicy/OnePolicy.pt` (an early
+checkpoint, 1200 iterations).
 Each robot stands 3 s under the policy with a zero command, then walks 5 s at
 0.5 m/s (Go2 units, scaled to the robot). "Walked" is the distance covered out
 of the ideal. "Knee torque" is the peak knee torque the policy used against

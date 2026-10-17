@@ -3,7 +3,52 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-14  Bug: actuator_headroom blew up the value loss; cap each excess at 1
+2026-10-17  Froude-scale action_rate_l2 / action_acc_l2; log key terms per size third
+  - Why: run 2026-10-17_05-05-36 (4096 envs, commit 40fec60) looked stuck at
+    a mean reward of ~28 from iteration ~135 to ~540. Mostly it is not: the
+    per-robot command curriculum raised command_levels 0.42 -> 0.74 while
+    the per-step tracking reward held at ~0.55, i.e. the same tracking at
+    faster commands (error_vel_xy is absolute m/s, so it rises with them).
+    The tracking-weight increase is only at iteration 5000, so nothing
+    raises the reward's ceiling before then. One real problem: the small
+    leg-length third fell 26 -> 21 while medium/large rose to ~32.
+  - Likely cause: action_rate_l2 (-0.05) and action_acc_l2 (-0.01) were
+    mjlab's unscaled terms, breaking the rule that every reward is in Go2
+    units, and they are the two largest penalties in the run (-0.29 and
+    -0.14 vs <= 0.05 for every other penalty). Actions are joint-angle
+    targets; gait time scales with sqrt(s_L) (feet_gait period and
+    feet_air_time target already do), so a small robot strides in fewer
+    50 Hz control steps and its actions change ~s_L^-0.5 as much per step
+    for the same gait. Squared: rate cost ~1/s_L, second difference
+    ~1/s_L^2. At s_L = 0.25 that was 4x / 16x Go2's cost for walking at its
+    natural cadence, at the p1 leg length (0.17) ~6x / ~35x.
+  - Fix: rewards.py scaled_action_rate_l2 (x s_L) and scaled_action_acc_l2
+    (x s_L^2), as joint_vel_l2 and joint_acc_l2 already are. Same names and
+    weights in velocity_env_cfg.py; at Go2 size nothing changes.
+  - Logging: runner.py also splits track_linear_velocity,
+    track_angular_velocity, action_rate_l2 and action_acc_l2 (iteration
+    mean of the weighted per-step value, i.e. reward per second) and the
+    mean command level by size third (or robot type with --generalise):
+    Morphology/<term>_<group>, Morphology/command_level_<group>. Shows what
+    a lagging group pays for and whether the curriculum holds it back.
+  - Caveat (watch for it): exploration noise is the same for every robot (one
+    policy std), so at the start, when actions are mostly noise, the scaled
+    terms now cost large robots more instead of small ones. 64-env test,
+    iteration 0: action_rate -0.61 / -1.60 / -3.82 per s and action_acc
+    -0.22 / -1.37 / -8.30 per s for the small / medium / large thirds, vs
+    ~0.35-0.55 tracking. That is correct in Go2 units (jitter is worse for a
+    slow body) and shrinks as the std drops, but if the large third stalls
+    early or the std collapses, cap the multiplier (e.g. s_L clamped to
+    <= 2) before touching the weights.
+  - Checked: train_test.py smoke test (2 robots, 3 s, no crash/NaN); 4
+    iterations of train.py with 64 envs and --plot: all 15 new scalars logged
+    with sensible values, test log deleted afterwards. Previous fix
+    (actuator_headroom cap, 40fec60): run 2026-10-17_05-05-36 is past
+    iteration 540 with no blow-up (headroom -0.002, value loss ~0.05).
+    Effect of this change: compare Morphology/mean_reward_small and
+    Morphology/action_*_small of the next run against 2026-10-17_05-05-36.
+
+2026-10-14  Bug: actuator_headroom blew up the value loss; cap each excess at 1 (40fec60)
   - Symptom (run 2026-10-14_13-12-39, 4096 envs, commit 4439f7e): learning
     until ~iteration 200 (mean reward 24, ~800-step episodes), then
     Episode_Reward/actuator_headroom -1e15 .. -6e19, Loss/value inf from

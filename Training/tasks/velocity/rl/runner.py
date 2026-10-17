@@ -26,6 +26,13 @@ PLOT_EVERY = 10
 # logged as Morphology/mean_reward_<group> (and plotted with --plot).
 SIZE_BUCKETS = ("small", "medium", "large")
 
+# Reward terms whose per-step weighted value is also split by group, logged as
+# Morphology/<term>_<group> (iteration mean), with each group's mean command
+# level as Morphology/command_level_<group>. Shows which terms a lagging
+# group pays for, and whether it is held back by the curriculum.
+SPLIT_TERMS = ("track_linear_velocity", "track_angular_velocity",
+               "action_rate_l2", "action_acc_l2")
+
 
 class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
   env: RslRlVecEnvWrapper
@@ -56,6 +63,15 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
       edges = torch.quantile(length, torch.tensor([1 / 3, 2 / 3], device=length.device))
       self._size_bucket = torch.bucketize(length, edges)  # [N] in {0, 1, 2}
       self._group_label = {g: f"{g} legs" for g in self._groups}
+    # A MultiVecEnv concatenates its sims' envs in batch order.
+    self._sub_envs = [e.unwrapped for e in getattr(self.env, "envs", [self.env])]
+    names = self._sub_envs[0].reward_manager.active_terms
+    self._split_terms = [t for t in SPLIT_TERMS if t in names]
+    self._split_idx = [names.index(t) for t in self._split_terms]
+    self._group_size = torch.bincount(self._size_bucket, minlength=len(self._groups))
+    self._term_sums = torch.zeros(len(self._groups), len(self._split_terms),
+                                  device=self.env.device)
+    self._term_steps = 0
     process = self.logger.process_env_step
     log = self.logger.log
 
@@ -65,6 +81,10 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
         returns = (self.logger.cur_reward_sum + rewards.flatten())[done].tolist()
         for bucket, ret in zip(self._size_bucket[done].tolist(), returns):
           self._sized_returns.append((self._groups[bucket], ret))
+      step = torch.cat([e.reward_manager._step_reward[:, self._split_idx]
+                        for e in self._sub_envs])
+      self._term_sums.index_add_(0, self._size_bucket, step)
+      self._term_steps += 1
       process(rewards, dones, extras, *a, **kw)
 
     def log_with_sizes(it, *a, **kw):
@@ -74,9 +94,34 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
       for bucket, mean in self._size_means().items():
         if mean is not None:
           self.logger.writer.add_scalar(f"Morphology/mean_reward_{bucket}", mean, it)
+      self._log_split_terms(it)
 
     self.logger.process_env_step = process_and_split
     self.logger.log = log_with_sizes
+
+  def _log_split_terms(self, it: int) -> None:
+    """Log each group's iteration-mean SPLIT_TERMS values and command level."""
+    if self._term_steps:
+      size = torch.clamp(self._group_size, min=1)[:, None] * self._term_steps
+      means = (self._term_sums / size).tolist()
+      for g, bucket in enumerate(self._groups):
+        if self._group_size[g] == 0:
+          continue
+        for t, term in enumerate(self._split_terms):
+          self.logger.writer.add_scalar(f"Morphology/{term}_{bucket}", means[g][t], it)
+    self._term_sums.zero_()
+    self._term_steps = 0
+    levels = []
+    for e in self._sub_envs:
+      term = e.command_manager.get_term("twist")
+      if term is None or not hasattr(term, "command_level"):
+        return
+      levels.append(term.command_level)
+    level = torch.cat(levels)
+    for g, bucket in enumerate(self._groups):
+      if self._group_size[g]:
+        mean = level[self._size_bucket == g].mean().item()
+        self.logger.writer.add_scalar(f"Morphology/command_level_{bucket}", mean, it)
 
   def _size_means(self) -> dict[str, float | None]:
     """Mean recent episode return per group (None if it has none)."""

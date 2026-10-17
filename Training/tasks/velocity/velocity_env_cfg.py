@@ -305,7 +305,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight=-200.0),
     "joint_acc_l2": RewardTermCfg(func=mdp.scaled_joint_acc_l2, weight=-2.5e-7),
     "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-10.0),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.05),
+    "action_rate_l2": RewardTermCfg(func=mdp.scaled_action_rate_l2, weight=-0.05),
     "foot_gait": RewardTermCfg(
       func=mdp.feet_gait,
       weight=0.5,
@@ -368,7 +368,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "joint_torques_l2": RewardTermCfg(func=mdp.scaled_joint_torques_l2, weight=-1e-4),
     "joint_vel_l2": RewardTermCfg(func=mdp.scaled_joint_vel_l2, weight=-5e-5),
-    "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
+    "action_acc_l2": RewardTermCfg(func=mdp.scaled_action_acc_l2, weight=-0.01),
     # Morphology-general terms: every quantity is a ratio to the robot's own
     # size or limits, so the weight means the same on every robot.
     "base_height": RewardTermCfg(

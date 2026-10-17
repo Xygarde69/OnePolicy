@@ -3,7 +3,44 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  Clamp s_L to [0.5, 2] in action_rate_l2 / action_acc_l2
+2026-10-17  Review: the one policy left, and why the runs after it did worse
+  - The only checkpoint left in Training/logs is
+    2026-10-17_05-05-36/model_1200.pt: started 2026-10-17 05:05 UTC, last
+    saved 06:14 UTC (1280 iterations logged), commit 40fec60, 4096 envs,
+    robot seed 1437162221, unscaled action_rate_l2 / action_acc_l2. Every
+    other run kept only policy.onnx (no model_*.pt). Mean return per
+    leg-length third (small / medium / large), iterations 600-699 and
+    1200-1279: 25.7 / 32.6 / 33.1 and 28.9 / 35.4 / 35.7, i.e. the large
+    robots did as well as the medium ones.
+  - Runs after it (TensorBoard scalars, 100-iteration means):
+    * 2026-10-17_06-24-35 (1aca06b, Froude-scaled smoothness, seed
+      1533410166, 1695 it): large third 10.7 at 600, 17.9 at 1600 vs
+      medium 35.2 / 39.3. See the 8bd455e entry below.
+    * 2026-10-17_08-21-30 (8bd455e, s_L clamped to [0.5, 2], same seed,
+      stopped at 480 it): 22.7 / 29.9 / 17.4 at 300 (baseline at 300:
+      24.8 / 29.9 / 31.4).
+    * 2026-10-17_08-23-40: only morphology_seed.txt, no events: aborted at
+      startup.
+    * 2026-10-17_08-59-18 (8bd455e, 2048 envs, seed 1375219334, 837 it):
+      36.3 / 34.0 / 21.5 at 600 (baseline 25.7 / 32.6 / 33.1).
+  - Why they did worse: the clamp only shrank the problem. At 600 in
+    08-59-18 the smoothness cost (rate + acc, per s) is -0.19 / -0.44 /
+    -1.01 per third; the 0.57 per s large-vs-medium gap x ~18 s episodes is
+    ~10 of the 12.5-point return gap. The cost still measures exploration
+    noise (shared policy std, 0.51 at 600), not the gait: a large robot
+    can't lower it, so any s_L > 1 multiplier is a flat tax on the large
+    third. The small third gained (36 vs 26) because its multiplier
+    dropped below 1, which is the same noise discount, not a better gait
+    (different seed and env count too, so only the large-third drop is a
+    clean comparison: 06-24-35 and 08-21-30 share a seed and both lag).
+  - Takeaway (not applied here): go back to unscaled action_rate_l2 /
+    action_acc_l2 (as in 40fec60), or apply Froude scaling only once the
+    policy std is small, e.g. scale by s_L^k with k ramped in by a
+    curriculum after the command levels saturate.
+  - Separately, the poor play results on Barkour and Byte01 v2 were adapter
+    problems, not training ones (see the adapter entry above).
+
+2026-10-17  Clamp s_L to [0.5, 2] in action_rate_l2 / action_acc_l2 (8bd455e)
   - Why: run 2026-10-17_06-24-35 (4096 envs, commit 1aca06b, robot seed
     1533410166), the first with the Froude-scaled smoothness terms, stalled
     the large leg-length third. Mean return per third (small / medium /

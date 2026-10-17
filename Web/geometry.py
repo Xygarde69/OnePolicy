@@ -52,9 +52,8 @@ def _parts(model: mujoco.MjModel) -> list[str]:
   return parts
 
 
-def _geometry(model: mujoco.MjModel, pose: dict[str, float], collision_only: bool = False) -> dict:
-  """collision_only: skip visual geoms (the generator's are A1 decorations of a
-  fixed size, not scaled with the robot)."""
+def _geometry(model: mujoco.MjModel, pose: dict[str, float], skip: tuple[str, ...] = ()) -> dict:
+  """skip: suffixes of geom names to leave out."""
   data = mujoco.MjData(model)
   data.qpos[:] = model.qpos0
   for name, value in pose.items():
@@ -72,9 +71,10 @@ def _geometry(model: mujoco.MjModel, pose: dict[str, float], collision_only: boo
   geoms, meshes = [], {}
   for g in range(model.ngeom):
     body, kind = int(model.geom_bodyid[g]), GEOM_TYPES.get(int(model.geom_type[g]))
-    if collision_only and visual(g):
+    name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+    if skip and name.endswith(skip):
       continue
-    if body == 0 or kind is None or (body in has_visual and not visual(g) and not collision_only):
+    if body == 0 or kind is None or (body in has_visual and not visual(g)):
       continue
     if model.geom_rgba[g][3] == 0:
       continue
@@ -107,7 +107,10 @@ def generated_geometry(seed: int, params: dict | None = None) -> dict:
   model = mujoco.MjModel.from_xml_string(xml, mesh_assets())
   x_knee = is_x_knee(ET.fromstring(xml).get("model", ""))
   pose = x_knee_pose(INIT_JOINT_POS) if x_knee else INIT_JOINT_POS
-  out = _geometry(model, _resolved_pose(model, pose), collision_only=True)
+  # The visual geoms span each link; the collision ones are short stubs. The
+  # hip mesh and hip_fixed disc are A1 decorations of a fixed size, not scaled
+  # with the robot.
+  out = _geometry(model, _resolved_pose(model, pose), skip=("_hip_visual", "_hip_fixed_visual"))
   out["info"] = _info(model, total_mass, max_vel, x_knee)
   out["name"] = f"generated #{seed}"
   return out

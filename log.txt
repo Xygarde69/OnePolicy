@@ -3,7 +3,17 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  Web UI: Next.js + shadcn neo-brutalist front end (Web/ui)
+2026-10-17  3D previews of generated robots: legs drawn as whole links (Web/geometry.py)
+  - What: generated robots are drawn from their visual geoms (cylinders
+    spanning each hip / thigh / calf link) minus the A1 hip mesh and
+    hip_fixed disc, instead of from their collision geoms.
+  - Why: the generator's collision cylinders are short stubs turned
+    sideways, so the legs looked like loose floating pieces.
+  - Checked: seed 7's geoms: thigh / calf half-lengths now 0.027 / 0.034 m
+    (were 0.005 / 0.007) and each segment ends where the next starts; go2
+    file geometry unchanged (33 geoms, 16 meshes); landing-page screenshot.
+
+2026-10-17  Web UI: Next.js + shadcn neo-brutalist front end (Web/ui) (1a85d35)
   - What: Web/ui (React 19, TypeScript, Next 16 static export, Tailwind 4,
     shadcn/ui restyled: ink borders, hard shadows, cream paper, flat
     yellow/pink/cyan/lime). Landing (spinning generated robot, two choices);

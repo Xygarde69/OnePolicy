@@ -3,7 +3,28 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  vis_rough.py: viewer for the rough training terrain
+2026-10-17  Per-group episode returns leave out episodes under 0.5 s (6d08130)
+  - What: tasks/velocity/rl/runner.py, MIN_EPISODE_S = 0.5: episodes shorter
+    than that are not added to Morphology/mean_reward_<group> (nor the --plot
+    columns). rsl_rl's overall mean reward is unchanged.
+  - Why: rollout of 2026-10-17_16-34-02/model_300.pt (rough, 512 robots,
+    seed 503448872): the small third's extra terminations came from 1-4
+    robots (s_L 0.25-0.4) dying right after every reset, ~170 times per
+    20 s (calf illegal_contact, mostly pyramid_stairs_inv_s0 row 0). Each
+    one finishes ~170 episodes of ~-4 return per 20 s vs one 20 s episode
+    for a normal robot, so they made up roughly 3/4 of the small third's
+    100-episode window. Without them the small third ended fewer episodes
+    than the large one (~0.3 vs ~0.7 per 20 s); tracking per third was
+    0.66 / 0.69 / 0.68 and feet_air_time ~0 for all.
+  - Also checked (flat, no policy, random actions): feet sink a near
+    constant 2-6 mm, 0.30 r on small vs 0.11 r on large robots (fixed
+    solimp width / solref), but standing small robots touch a calf less
+    often (9% of steps vs 22-25%), so foot contact isn't the cause.
+  - Checked: train.py --task flat --num-envs 64 --agent.max-iterations 4
+    --plot runs; mean_reward.csv fills the per-third columns from
+    iteration 1 (none at 0, no episode was 0.5 s long yet).
+
+2026-10-17  vis_rough.py: viewer for the rough training terrain (e66578a)
   - What: Training/vis_rough.py drops one generated robot (--seed) on the
     chosen bin / terrain type / difficulty row of the rough grid and opens a
     free-camera MuJoCo viewer (--bin, --kind, --row, --viewer False to just

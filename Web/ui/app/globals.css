@@ -10,6 +10,7 @@
   --font-sans: var(--font-body);
   --font-mono: var(--font-code);
   --font-heading: var(--font-display);
+  --font-script: var(--font-brand);
   --color-ink: var(--ink);
   --color-paper: var(--paper);
   --color-yellow: var(--yellow);

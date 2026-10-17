@@ -51,21 +51,41 @@ export function useGeometry(source: RobotSource | null) {
   return { geometry, error };
 }
 
-export function PartsPopup({ open, geometry, onContinue, onOpenChange }: {
+export function PartsPopup({ open, geometry, onContinue, onOpenChange, name, description, continueLabel }: {
   open: boolean;
   geometry: Geometry | null;
   onContinue: () => void;
   onOpenChange: (open: boolean) => void;
+  /** Shown before the geometry arrives, and in place of its file name. */
+  name?: string;
+  description?: React.ReactNode;
+  continueLabel?: string;
 }) {
+  const title = name ?? geometry?.name;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92vh] overflow-auto bg-paper sm:max-w-4xl">
         <DialogTitle className="font-heading text-3xl uppercase">
-          {geometry ? `Meet ${geometry.name}` : "Building your robot…"}
+          {title ? `Meet ${title}` : "Building your robot…"}
         </DialogTitle>
         <DialogDescription className="text-base text-ink">
-          Adapted to the training convention. Here are the three links every leg and body comes down to.
+          {description ? <>{description} </> : null}
+          Adapted to the training convention; drag to turn it. Below are the three links every leg and body comes down to.
         </DialogDescription>
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={open ? { opacity: 1, y: 0 } : {}}
+          className="brutal relative h-72 shrink-0 overflow-hidden bg-cyan sm:h-80"
+        >
+          <div className="absolute inset-0 bg-[linear-gradient(var(--ink)_1px,transparent_1px),linear-gradient(90deg,var(--ink)_1px,transparent_1px)] bg-[size:32px_32px] opacity-15" />
+          {geometry ? (
+            <RobotCanvas geometry={geometry} spin={0.5} className="absolute inset-0" />
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center gap-3 font-heading text-xl uppercase">
+              <span className="size-6 animate-spin rounded-sm border-3 border-ink border-t-white" /> loading the meshes
+            </div>
+          )}
+        </motion.div>
         <div className="grid gap-5 sm:grid-cols-3">
           {PARTS.map((p, i) => (
             <motion.div
@@ -73,7 +93,7 @@ export function PartsPopup({ open, geometry, onContinue, onOpenChange }: {
               initial={{ scale: 0, rotate: -12, opacity: 0 }}
               animate={open ? { scale: 1, rotate: 0, opacity: 1 } : {}}
               transition={{ delay: 0.15 + i * 0.18, type: "spring", stiffness: 300, damping: 14 }}
-              className="brutal relative flex aspect-[3/4] flex-col overflow-hidden bg-white"
+              className="brutal relative flex h-64 flex-col overflow-hidden bg-white"
             >
               <div className="relative flex-1 overflow-hidden">
                 <Ripples color={`${p.color}66`} />
@@ -110,7 +130,7 @@ export function PartsPopup({ open, geometry, onContinue, onOpenChange }: {
           </motion.div>
         )}
         <Button size="lg" className="w-fit" disabled={!geometry} onClick={onContinue}>
-          Looks right, continue →
+          {continueLabel ?? "Looks right, continue →"}
         </Button>
       </DialogContent>
     </Dialog>

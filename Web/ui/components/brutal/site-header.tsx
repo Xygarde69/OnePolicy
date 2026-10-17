@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { OnePolicy } from "./brand";
 import { api, type State } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/train/", label: "Train", color: "bg-pink" },
-  { href: "/onepolicy/", label: "OnePolicy ;)", color: "bg-cyan" },
+  { href: "/onepolicy/", label: <OnePolicy className="text-base" />, color: "bg-cyan" },
 ];
 
 export function SiteHeader() {
@@ -22,8 +23,7 @@ export function SiteHeader() {
     <header className="sticky top-0 z-40 border-b-3 border-ink bg-paper">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4">
         <Link href="/" className="brutal brutal-press flex items-center gap-2 bg-yellow px-3 py-1">
-          <span className="font-heading text-xl leading-none">ONEPOLICY</span>
-          <span className="font-mono text-sm font-bold">;)</span>
+          <OnePolicy className="text-2xl leading-none" />
         </Link>
         <nav className="flex gap-2">
           {NAV.map((n) => (

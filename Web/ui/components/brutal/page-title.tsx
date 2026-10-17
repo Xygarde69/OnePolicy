@@ -1,8 +1,8 @@
 import { cn } from "@/lib/utils";
 
 export function PageTitle({ kicker, title, children, color = "bg-yellow" }: {
-  kicker: string;
-  title: string;
+  kicker: React.ReactNode;
+  title: React.ReactNode;
   children?: React.ReactNode;
   color?: string;
 }) {

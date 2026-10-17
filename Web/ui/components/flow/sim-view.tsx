@@ -143,7 +143,7 @@ export function SimView({ start, label }: { start: () => Promise<PlayStatus>; la
                     Placing the robot<Dots />
                   </span>
                   <span className="font-mono text-xs text-paper/60">
-                    fixing + adapting the MJCF, loading OnePolicy, compiling MuJoCo-Warp kernels
+                    fixing + adapting the MJCF, loading the policy, compiling MuJoCo-Warp kernels
                   </span>
                   <span className="hazard animate-stripes h-4 w-64 rounded-sm border-3 border-paper" />
                 </>

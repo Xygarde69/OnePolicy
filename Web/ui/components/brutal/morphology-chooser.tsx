@@ -9,9 +9,9 @@ import { UnderConstruction } from "./under-construction";
 
 /** Step one of both flows: quadruped (works) or custom morphology (not yet). */
 export function MorphologyChooser({ kicker, title, intro, next, color }: {
-  kicker: string;
-  title: string;
-  intro: string;
+  kicker: React.ReactNode;
+  title: React.ReactNode;
+  intro: React.ReactNode;
   next: string;
   color: string;
 }) {

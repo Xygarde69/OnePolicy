@@ -3,6 +3,7 @@
 import { Bot, Dumbbell } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ChoiceCard } from "@/components/brutal/choice-card";
+import { OnePolicy } from "@/components/brutal/brand";
 import { Marquee } from "@/components/brutal/marquee";
 import { HeroRobot } from "@/components/three/hero-robot";
 
@@ -26,7 +27,7 @@ export default function Home() {
           </h1>
           <p className="max-w-xl text-xl font-medium">
             Trained on thousands of procedurally generated quadrupeds, 1/4× to 4× a Go2. Bring your own MJCF and
-            train it here, or drop it straight into OnePolicy and drive it with your keyboard.
+            train it here, or drop it straight into <OnePolicy /> and drive it with your keyboard.
           </p>
         </div>
         <HeroRobot />
@@ -50,7 +51,7 @@ export default function Home() {
           big
           color="bg-cyan"
           icon={Bot}
-          title="OnePolicy ;)"
+          title={<OnePolicy className="text-6xl" />}
           subtitle="Pick a bundled robot, generate one with sliders, or upload yours. Then drop it in the sim and drive it with WASD."
           tag="no training needed"
           onClick={() => router.push("/onepolicy/")}

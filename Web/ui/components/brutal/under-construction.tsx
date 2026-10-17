@@ -1,6 +1,7 @@
 "use client";
 
 import { Construction } from "lucide-react";
+import { OnePolicy } from "./brand";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 
@@ -19,7 +20,7 @@ export function UnderConstruction({ open, onOpenChange, what }: {
           </div>
           <DialogTitle className="font-heading text-3xl uppercase">This page is under construction</DialogTitle>
           <DialogDescription className="text-base text-ink">
-            <b>{what}</b> isn&apos;t built yet. OnePolicy covers 12-DoF quadrupeds of any size for now;
+            <b>{what}</b> isn&apos;t built yet. <OnePolicy /> covers 12-DoF quadrupeds of any size for now;
             other body plans come later.
           </DialogDescription>
           <Button onClick={() => onOpenChange(false)}>Got it, back to quadrupeds</Button>

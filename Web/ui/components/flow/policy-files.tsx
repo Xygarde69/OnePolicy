@@ -4,6 +4,7 @@ import { Download, FileUp, Play } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { OnePolicy } from "@/components/brutal/brand";
 import { Button } from "@/components/ui/button";
 import { downloadUrl, importPolicy, shortPath } from "@/lib/api";
 
@@ -64,7 +65,7 @@ export function PolicyFiles({ checkpoints, onImported }: {
         <span className="font-heading text-xl uppercase">Import a .pt</span>
         <p className="text-sm font-medium">
           A checkpoint from another machine or an earlier run. It lands in its own run folder, so you can walk it in
-          OnePolicy or start the next training from it.
+          <OnePolicy /> or start the next training from it.
         </p>
         <Button className="w-fit" disabled={busy} onClick={() => input.current?.click()}>
           <FileUp /> Choose .pt file

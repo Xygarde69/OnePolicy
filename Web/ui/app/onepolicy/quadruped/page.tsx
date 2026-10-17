@@ -4,6 +4,7 @@ import { Boxes, SlidersHorizontal, Upload } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { OnePolicy } from "@/components/brutal/brand";
 import { PageTitle } from "@/components/brutal/page-title";
 import { StepRail } from "@/components/brutal/step-rail";
 import { AdapterReport, type UploadRef } from "@/components/flow/adapter-report";
@@ -11,7 +12,7 @@ import { ConventionDoc } from "@/components/flow/convention-doc";
 import { FolderUpload } from "@/components/flow/folder-upload";
 import { type Generated, GeneratorPanel } from "@/components/flow/generator-panel";
 import { PartsPopup, useGeometry } from "@/components/flow/parts-popup";
-import { PreloadedGrid } from "@/components/flow/preloaded-grid";
+import { describe, PreloadedGrid, prettyName } from "@/components/flow/preloaded-grid";
 import { SimView } from "@/components/flow/sim-view";
 import { TerrainPicker } from "@/components/flow/terrain-picker";
 import { Button } from "@/components/ui/button";
@@ -50,12 +51,13 @@ export default function OnePolicyQuadruped() {
     return null;
   }, [tab, robot, generated, upload, inspect]);
 
-  const { geometry, error } = useGeometry(step >= 1 ? source : null);
+  // Meshes load only once a robot is picked (several MB each for some).
+  const { geometry, error } = useGeometry(step >= 1 || parts ? source : null);
   useEffect(() => {
     if (error) toast.error(error);
   }, [error]);
 
-  const label = source?.source === "robot" ? source.robot : source?.source === "random" ? `generated #${source.seed}` : upload?.xml ?? "";
+  const label = source?.source === "robot" ? prettyName(source.robot) : source?.source === "random" ? `generated #${source.seed}` : upload?.xml ?? "";
 
   const start = useCallback(
     () => api<PlayStatus>("play", { ...source, policy, terrain, drive: true }),
@@ -70,7 +72,7 @@ export default function OnePolicyQuadruped() {
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-10">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <PageTitle kicker="onepolicy ;) · quadruped" title="Walk any quadruped" color="bg-cyan" />
+        <PageTitle kicker={<><OnePolicy className="text-sm" /> · quadruped</>} title="Walk any quadruped" color="bg-cyan" />
         {state && (
           <div className="flex flex-col gap-1">
             <span className="font-mono text-[11px] font-bold uppercase">Policy</span>
@@ -78,7 +80,7 @@ export default function OnePolicyQuadruped() {
               <SelectTrigger className="w-72"><SelectValue placeholder="no checkpoint found" /></SelectTrigger>
               <SelectContent>
                 {state.checkpoints.map((c) => (
-                  <SelectItem key={c} value={c}>{c === state.onepolicy ? "OnePolicy.pt ;)" : shortPath(c)}</SelectItem>
+                  <SelectItem key={c} value={c}>{c === state.onepolicy ? <OnePolicy /> : shortPath(c)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -97,7 +99,14 @@ export default function OnePolicyQuadruped() {
                 <TabsTrigger value="upload"><Upload /> Upload MJCF</TabsTrigger>
               </TabsList>
               <TabsContent value="preloaded" className="flex flex-col gap-5">
-                {state && <PreloadedGrid robots={state.robots} selected={robot} onSelect={setRobot} />}
+                {state && <PreloadedGrid
+                    robots={state.robots}
+                    selected={robot}
+                    onSelect={(r) => {
+                      setRobot(r);
+                      setParts(true);
+                    }}
+                  />}
               </TabsContent>
               <TabsContent value="generate">
                 <GeneratorPanel value={generated} onChange={setGenerated} />
@@ -169,6 +178,9 @@ export default function OnePolicyQuadruped() {
         open={parts}
         onOpenChange={setParts}
         geometry={geometry}
+        name={source?.source === "robot" ? label : undefined}
+        description={source?.source === "robot" ? describe(source.robot) : undefined}
+        continueLabel={label ? `Go with ${label} →` : undefined}
         onContinue={() => {
           setParts(false);
           setStep(2);

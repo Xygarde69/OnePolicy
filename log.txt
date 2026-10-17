@@ -3,7 +3,22 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  3D previews of generated robots: legs drawn as whole links (Web/geometry.py)
+2026-10-17  Web UI: OnePolicy™ wordmark; preloaded robots load on click
+  - What: components/brutal/brand.tsx renders "OnePolicy" in Pacifico
+    script with a raised ™, used everywhere the name appears (header, nav,
+    landing card and copy, page kickers / titles, policy selects, popups;
+    the tab title is "OnePolicy™"). The preloaded tab lists robots by name
+    only; clicking one opens the parts popup with a short description, the
+    whole robot turning (drag to orbit), the base / thigh / calf tiles and a
+    "Go with <robot>" button that goes straight to the terrain step.
+  - Why: the plain name read as a placeholder; and rendering all 12 robots'
+    meshes at once (several MB each, one drei View per card) crashed the
+    page. Now only the picked robot's meshes are fetched and drawn.
+  - Checked: tsc and next build clean; Playwright screenshots: landing and
+    header wordmark, robot list with no canvas, Spot + arm and Go2 popups
+    (first version overlapped the tiles with the full view; fixed heights).
+
+2026-10-17  3D previews of generated robots: legs drawn as whole links (Web/geometry.py) (e4f24a4)
   - What: generated robots are drawn from their visual geoms (cylinders
     spanning each hip / thigh / calf link) minus the A1 hip mesh and
     hip_fixed disc, instead of from their collision geoms.

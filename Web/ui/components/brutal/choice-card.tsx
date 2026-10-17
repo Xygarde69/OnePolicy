@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 type Props = {
   index: number;
-  title: string;
+  title: React.ReactNode;
   subtitle: string;
   icon: LucideIcon;
   color: string;

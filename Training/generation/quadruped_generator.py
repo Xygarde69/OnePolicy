@@ -37,11 +37,27 @@ max_scale = 4.0
 
 max_joint_velocity = 6 * np.pi  # [rad/s] at Go2's size; ~1/sqrt(scale) (Froude)
 
+# create_robot(params=...) keys that replace a random draw. "scale" is the
+# overall size vs Go2; every other value multiplies Go2's own value at that
+# size (1 = Go2's proportions). The draws are still made, so the values not
+# given stay the seed's.
+PARAM_KEYS = ("scale", "base_length", "base_width", "base_height", "density",
+              "thigh_length", "calf_length", "leg_radius", "hip_link", "link_mass")
+
+
+def _fixed(params, key, drawn, nominal):
+    return drawn if key not in params else nominal * params[key]
+
 
 def create_robot(p,
                  basePosition=[0, 0, 0],
                  baseOrientation=[0, 0, 0, 1],
-                 delta_scale=1):
+                 delta_scale=1,
+                 params=None):
+    params = params or {}
+    unknown = set(params) - set(PARAM_KEYS)
+    if unknown:
+        raise ValueError(f"Unknown generator params {sorted(unknown)}; known: {PARAM_KEYS}")
 
     base_delta_cur = base_delta * delta_scale
     density_delta_cur = density_delta * delta_scale
@@ -51,18 +67,27 @@ def create_robot(p,
     #RANDOMIZATIONS
 
     log_scale = np.log(max_scale) * delta_scale
-    randomized_scale = float(np.exp(uniform(-log_scale, log_scale)))
+    randomized_scale = float(_fixed(params, "scale", np.exp(uniform(-log_scale, log_scale)), 1.0))
 
     x_base, y_base, z_base = uniform(go2_base - base_delta_cur, go2_base + base_delta_cur) * randomized_scale
+    x_base = _fixed(params, "base_length", x_base, go2_base[0] * randomized_scale)
+    y_base = _fixed(params, "base_width", y_base, go2_base[1] * randomized_scale)
+    z_base = _fixed(params, "base_height", z_base, go2_base[2] * randomized_scale)
 
     lower_cylinder_radius, lower_cylinder_length = uniform(go2_cylinder - cyl_delta_cur, go2_cylinder + cyl_delta_cur) * randomized_scale
     # upper_cylinder_radius, upper_cylinder_length = uniform(go2_cylinder - cyl_delta_cur, go2_cylinder + cyl_delta_cur)
     upper_cylinder_radius = lower_cylinder_radius * uniform(0.75, 1.25)
     upper_cylinder_length = lower_cylinder_length * uniform(0.75, 1.25)
+    lower_cylinder_radius = _fixed(params, "leg_radius", lower_cylinder_radius, go2_cylinder[0] * randomized_scale)
+    upper_cylinder_radius = _fixed(params, "leg_radius", upper_cylinder_radius, go2_cylinder[0] * randomized_scale)
+    lower_cylinder_length = _fixed(params, "calf_length", lower_cylinder_length, go2_cylinder[1] * randomized_scale)
+    upper_cylinder_length = _fixed(params, "thigh_length", upper_cylinder_length, go2_cylinder[1] * randomized_scale)
 
     linkMasses = uniform(link_masses - link_masses_delta_cur, link_masses + link_masses_delta_cur) * (randomized_scale**3)
+    linkMasses = _fixed(params, "link_mass", linkMasses, link_masses * randomized_scale**3)
 
     baseDensity = uniform(go2_density - density_delta_cur, go2_density + density_delta_cur)
+    baseDensity = _fixed(params, "density", baseDensity, go2_density)
     baseMass = baseDensity * x_base * y_base * z_base
 
     baseCollisionShapeIndex = p.createCollisionShape(
@@ -522,6 +547,7 @@ def create_robot(p,
     # hip link: thigh joint sits beside the hip joint, along the thigh joint axis (y), parallel to the ground
     hip_link_delta_cur = hip_link_delta * delta_scale
     hip_link_length = go2_hip_link_length * uniform(1 - hip_link_delta_cur, 1 + hip_link_delta_cur) * randomized_scale
+    hip_link_length = _fixed(params, "hip_link", hip_link_length, go2_hip_link_length * randomized_scale)
     # hip_fixed_link_pos += (y_base - go2_base[1]) / 2
     # hip_fixed_link_pos *= y_base / go2_base[1] * y_r
 

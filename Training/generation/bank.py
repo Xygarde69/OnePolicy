@@ -11,6 +11,7 @@ simulates robot i.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import secrets
@@ -23,6 +24,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from .conditions import parse_condition, evaluate, robot_variables
 from .knees import is_x_knee, x_knee_pose
 from .mjcf_builder import make_robot_xml, mesh_assets
 
@@ -64,6 +66,13 @@ class MorphologyGenCfg:
   x_knee_fraction: float = 0.5
   """Share of robots with "><" knees (rear knees bend forward, ANYmal); the
   rest are ">>" (Go2). See knees.py."""
+  params: str = ""
+  """Generator values that replace random draws, as JSON, applied to every
+  robot, e.g. '{"scale": 1.5, "x_knee": true}' (keys:
+  quadruped_generator.PARAM_KEYS and x_knee)."""
+  condition: str = ""
+  """Keep only robots for which this is true, e.g. "leg_length > 0.3 and mass
+  < 40" (variables: generation/conditions.py). Failing seeds are skipped."""
 
 
 def _names(model: mujoco.MjModel, obj: mujoco.mjtObj, n: int) -> list[str]:
@@ -193,13 +202,21 @@ def _extract(model: mujoco.MjModel, init_joint_pos: dict[str, float],
 
 
 def _make_one(args):
-  seed, delta_scale, x_knee_fraction, init_joint_pos, clearance = args
-  xml, total_mass, max_vel = make_robot_xml(seed, delta_scale, x_knee_fraction)
+  """One generated robot; None if it fails `condition` (a condition string)."""
+  seed, delta_scale, x_knee_fraction, init_joint_pos, clearance, params, condition = args
+  xml, total_mass, max_vel = make_robot_xml(seed, delta_scale, x_knee_fraction, params)
   if is_x_knee(ET.fromstring(xml).get("model", "")):
     init_joint_pos = x_knee_pose(init_joint_pos)
-  fields, structure, scalars = _extract(_compile(xml), init_joint_pos, clearance)
+  model = _compile(xml)
+  fields, structure, scalars = _extract(model, init_joint_pos, clearance)
   scalars.update(total_mass=total_mass, max_joint_velocity=max_vel)
+  if condition and not evaluate(parse_condition(condition), robot_variables(model, scalars)):
+    return None
   return seed, xml, scalars, fields, structure
+
+
+# With a condition, give up after this many seeds per robot asked for.
+MAX_TRIES_PER_ROBOT = 50
 
 
 def _save_bank(out_dir: Path, reference: mujoco.MjModel, seeds,
@@ -269,23 +286,46 @@ def generate_bank(num_envs: int, out_dir: Path, cfg: MorphologyGenCfg,
                      f"next to {sum(proxies.values())} proxies.")
   out_dir.mkdir(parents=True, exist_ok=True)
   base_seed = cfg.seed if cfg.seed is not None else secrets.randbits(31)
-  jobs = [(base_seed + i, cfg.delta_scale, cfg.x_knee_fraction, init_joint_pos,
-           cfg.foot_clearance)
-          for i in range(num_generated)]
+  params = json.loads(cfg.params) if cfg.params.strip() else None
+  condition = cfg.condition.strip()
+  if condition:
+    parse_condition(condition)  # Fails here, not in a worker.
+
+  def jobs(start: int, count: int):
+    return [(base_seed + i, cfg.delta_scale, cfg.x_knee_fraction, init_joint_pos,
+             cfg.foot_clearance, params, condition)
+            for i in range(start, start + count)]
+
   workers = cfg.workers or os.cpu_count() or 1
 
   print(f"[INFO] Generating {num_generated} random quadrupeds "
-        f"(base seed {base_seed}, {workers} workers)...", flush=True)
-  if workers == 1 or num_generated == 1:
-    results = map(_make_one, jobs)
-  else:
-    pool = ProcessPoolExecutor(max_workers=workers)
-    results = pool.map(_make_one, jobs,
-                       chunksize=max(1, num_generated // (workers * 8)))
+        f"(base seed {base_seed}, {workers} workers"
+        + (f", condition: {condition}" if condition else "") + ")...", flush=True)
+  pool = None if workers == 1 or num_generated == 1 else ProcessPoolExecutor(max_workers=workers)
+
+  def run(batch):
+    if pool is None:
+      return map(_make_one, batch)
+    return pool.map(_make_one, batch, chunksize=max(1, len(batch) // (workers * 8)))
 
   def generated():
-    for result in results:
-      yield ("generated", *result)
+    # Seeds base_seed, base_seed + 1, ...; with a condition, the failing ones
+    # are skipped and more are drawn until num_generated pass.
+    accepted, tried = 0, 0
+    while accepted < num_generated:
+      if tried >= MAX_TRIES_PER_ROBOT * num_generated:
+        raise ValueError(f"Only {accepted} of {tried} generated robots satisfy the "
+                         f"condition '{condition}'; loosen it.")
+      count = num_generated - accepted
+      if condition and tried:
+        count = max(count, min(4 * count * tried // max(accepted, 1), 8 * workers))
+      for result in run(jobs(tried, count)):
+        if result is not None and accepted < num_generated:
+          accepted += 1
+          yield ("generated", *result)
+      tried += count
+      if condition:
+        print(f"[INFO]   condition: {accepted}/{tried} robots kept", flush=True)
 
   def proxy_results():
     from .proxy import make_proxy  # Imports adapt.py; only needed here.
@@ -320,7 +360,7 @@ def generate_bank(num_envs: int, out_dir: Path, cfg: MorphologyGenCfg,
       fields.setdefault(f, []).append(v)
     if (i + 1) % 1024 == 0 or i + 1 == num_envs:
       print(f"[INFO]   compiled {i + 1}/{num_envs}", flush=True)
-  if workers > 1 and num_generated > 1:
+  if pool is not None:
     pool.shutdown()
 
   bank_path = _save_bank(out_dir, reference, seeds, scalars, fields, sources)

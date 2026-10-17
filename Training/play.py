@@ -18,13 +18,19 @@ Without --policy, the latest checkpoint of the latest training run is used.
 --agent zero / random plays without a policy (to check the robot).
 --joystick True drives the robot with a DualSense: right stick up/down =
 forward/back, left/right = sideways; L1 turns left, R1 turns right (gamepad.py).
+--command-port P takes the command from UDP datagrams "forward left yaw" on
+127.0.0.1:P instead (the web harness's keyboard driving); no datagram for
+0.5 s means stand still.
 """
 
 import os
 import secrets
+import socket
 import shutil
 import sys
 import tempfile
+import threading
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
@@ -78,6 +84,9 @@ class PlayConfig:
   """Play a newly generated random robot instead."""
   seed: int | None = None
   """Seed of the --random robot. None draws a fresh one."""
+  gen_params: str = ""
+  """Generator values for the --random robot, as JSON (MorphologyGenCfg.params),
+  e.g. '{"scale": 1.5, "x_knee": true}'."""
   robot_xml: str = ROBOT_XML
   """Robot MJCF (the robot file, not a scene that <include>s it)."""
   quadrupeds_dir: str = str(QUADRUPEDS_DIR)
@@ -126,6 +135,9 @@ class PlayConfig:
   joystick_scale: float = 2.0
   """Multiplies all four joystick speeds above (forward, backward, sideways,
   yaw), whether defaulted or given."""
+  command_port: int | None = None
+  """Take the command (Go2 units) from UDP "forward left yaw" datagrams on
+  127.0.0.1:<port>. Overrides --command."""
 
 
 def prepare_robot(cfg: PlayConfig, robot_dir: Path):
@@ -138,7 +150,8 @@ def prepare_robot(cfg: PlayConfig, robot_dir: Path):
 
   if cfg.random:
     seed = cfg.seed if cfg.seed is not None else secrets.randbits(31)
-    generate_bank(1, robot_dir, MorphologyGenCfg(seed=seed, workers=1), INIT_JOINT_POS)
+    generate_bank(1, robot_dir, MorphologyGenCfg(seed=seed, workers=1, params=cfg.gen_params),
+                  INIT_JOINT_POS)
     return None, f"random_{seed}", None
 
   if cfg.robot is not None:
@@ -201,6 +214,36 @@ def attach_gamepad(env: ManagerBasedRlEnv, cfg: PlayConfig) -> None:
         f"{max_yaw:.2f} rad/s")
 
 
+# Without a UDP command for this long, the robot is told to stand still.
+COMMAND_TIMEOUT_S = 0.5
+
+
+def attach_command_port(env: ManagerBasedRlEnv, port: int) -> None:
+  """Let UDP datagrams "forward left yaw" (Go2 units) set the velocity command."""
+  sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+  sock.bind(("127.0.0.1", port))
+  latest = {"command": (0.0, 0.0, 0.0), "time": 0.0}
+
+  def listen():
+    while True:
+      data = sock.recv(256)
+      try:
+        forward, left, yaw = (float(v) for v in data.decode().split())
+      except ValueError:
+        continue
+      latest.update(command=(forward, left, yaw), time=time.monotonic())
+
+  threading.Thread(target=listen, daemon=True).start()
+
+  def command() -> tuple[float, float, float]:
+    if time.monotonic() - latest["time"] > COMMAND_TIMEOUT_S:
+      return (0.0, 0.0, 0.0)
+    return latest["command"]
+
+  env.command_manager.get_term("twist").gamepad = command
+  print(f"[INFO]: Commands from UDP 127.0.0.1:{port}", flush=True)
+
+
 def run_play(cfg: PlayConfig):
   # The robot is deleted when play ends, however it ends.
   robot_dir = Path(tempfile.mkdtemp(prefix="play_robot_"))
@@ -260,6 +303,8 @@ def _play(cfg: PlayConfig, robot_dir: Path):
 
   if cfg.joystick:
     attach_gamepad(env, cfg)
+  elif cfg.command_port is not None:
+    attach_command_port(env, cfg.command_port)
   elif cfg.command:
     if len(cfg.command) != 3:
       raise ValueError(f"--command takes 3 numbers (forward left yaw), got {cfg.command}")

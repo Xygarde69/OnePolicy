@@ -217,6 +217,8 @@ $PY train.py --help                              # all --env.* / --agent.* optio
 | `--morphology.foot-clearance` | `0.02` | Gap between lowest foot and floor at spawn [m] |
 | `--morphology.x-knee-fraction` | `0.5` | Share of generated robots with `><` knees (rear knees forward); the rest are `>>` |
 | `--morphology.workers` | all CPUs | Processes used for generation |
+| `--morphology.params` | `""` | Generator values that replace random draws, as JSON, for every robot, e.g. `'{"scale": 1.5, "x_knee": true}'`. `scale` is size vs Go2; `base_length`, `base_width`, `base_height`, `density`, `thigh_length`, `calf_length`, `leg_radius`, `hip_link`, `link_mass` multiply Go2's value at that size |
+| `--morphology.condition` | `""` | Keep only robots for which this is true, e.g. `"leg_length > 0.3 and mass < 40"`; failing seeds are skipped. Variables (mass, link lengths, COM, PD gains, torque limits, …) in `generation/conditions.py` |
 | `--agent.max-iterations` | `10001` | PPO iterations |
 | `--agent.logger` | `tensorboard` | `tensorboard` or `wandb` |
 | `--video` | `False` | Record training videos |
@@ -352,6 +354,8 @@ option is given.
 | `--joystick True` | `False` | Drive with a DualSense: right stick up/down = forward/back, left/right = sideways; L1 / R1 = turn left / right. Read from `--joystick-device` (`/dev/input/js0`) |
 | `--joystick-max-forward/-backward/-lateral/-yaw` | task range | Full-stick speeds and L1/R1 turn rate (Go2 m/s and rad/s, scaled to the robot) |
 | `--joystick-scale` | `2.0` | Multiplies all four joystick speeds |
+| `--command-port P` | none | Take the command from UDP datagrams `"forward left yaw"` (Go2 units) on `127.0.0.1:P`; no datagram for 0.5 s = stand still. Used by the web harness's WASD driving |
+| `--gen-params JSON` | `""` | With `--random`: generator values, as `--morphology.params` |
 
 Booleans take a value (`--random True`), the mjlab convention.
 

@@ -3,7 +3,30 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-17  Publish the one policy: OnePolicy/OnePolicy.pt
+2026-10-17  Generator params, morphology conditions, UDP command port
+  - What: quadruped_generator.create_robot(params=...) replaces chosen random
+    draws (PARAM_KEYS: scale, base_length/width/height, density,
+    thigh_length, calf_length, leg_radius, hip_link, link_mass; all but scale
+    multiply Go2's value at the robot's size), plus "x_knee" in
+    generate_morphology. The draws are still made, so a seed's other values
+    don't move; no params = identical robots. MorphologyGenCfg.params (JSON,
+    --morphology.params) and .condition (--morphology.condition): an
+    expression over generation/conditions.py's VARIABLES (mass, link
+    lengths, base box, COM in the base frame, size-scaled PD gains and torque
+    limits, ...), parsed with a whitelist AST walker (no eval); failing seeds
+    are skipped, more are drawn, at most 50 seeds per robot. play.py
+    --gen-params (for --random) and --command-port (UDP "forward left yaw",
+    Go2 units, 0 after 0.5 s of silence).
+  - Why: the web UI's generator sliders, "your own conditions" step before
+    training, and WASD driving.
+  - Checked: make_robot_xml(5) == make_robot_xml(5, params={}); scale 2 +
+    x_knee gives a "><" robot of 116 kg; 16 robots with "leg_length > 0.5
+    and mass < 60" (16 of 112 seeds kept, all inside the bounds);
+    __import__, attributes, strings and unknown names are rejected.
+    train_test smoke test (2 robots, 3 s, no crash/NaN); the new flags show
+    in play.py / train.py --help.
+
+2026-10-17  Publish the one policy: OnePolicy/OnePolicy.pt (d2b299a)
   - What: OnePolicy/ (new): OnePolicy.pt = Training/logs/.../2026-10-17_05-05-36/
     model_1200.pt (sha256 4f825bdd...), OnePolicy.onnx = that run's
     policy.onnx (exported with the same checkpoint, sha256 ee5b91c6...),

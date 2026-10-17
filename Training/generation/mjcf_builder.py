@@ -114,16 +114,22 @@ def mj_quat(xyzw):
   return (w, x, y, z)
 
 
-def generate_morphology(seed: int, delta_scale: float = 1.0, x_knee_fraction: float = 0.5):
+def generate_morphology(seed: int, delta_scale: float = 1.0, x_knee_fraction: float = 0.5,
+                        params: dict | None = None):
   """Run GenLoco's generator in headless PyBullet; return recorded data and
-  whether the robot is "><" (rear knees forward, probability x_knee_fraction)."""
+  whether the robot is "><" (rear knees forward, probability x_knee_fraction).
+
+  params: values that replace random draws (quadruped_generator.PARAM_KEYS),
+  plus "x_knee" (bool) to pick the knee layout."""
+  params = dict(params or {})
+  forced_x_knee = params.pop("x_knee", None)
   # create_robot draws from numpy's global RNG.
   np.random.seed(seed)
   cid = pybullet.connect(pybullet.DIRECT)
   try:
     pybullet.setAdditionalSearchPath(GENERATION_DIR, physicsClientId=cid)
     rec = RecordingClient(pybullet)
-    uid = quadruped_generator.create_robot(rec, delta_scale=delta_scale)
+    uid = quadruped_generator.create_robot(rec, delta_scale=delta_scale, params=params)
     dynamics = {
       i: pybullet.getDynamicsInfo(uid, i, physicsClientId=cid)
       for i in range(-1, pybullet.getNumJoints(uid, physicsClientId=cid))
@@ -136,6 +142,8 @@ def generate_morphology(seed: int, delta_scale: float = 1.0, x_knee_fraction: fl
     factor = np.random.uniform(1 - d, 1 + d)
     dynamics[i] = (dyn[0], dyn[1], tuple(np.asarray(dyn[2]) * factor), *dyn[3:])
   x_knee = bool(np.random.uniform() < x_knee_fraction)
+  if forced_x_knee is not None:
+    x_knee = bool(forced_x_knee)
   return rec, dynamics, x_knee
 
 
@@ -275,15 +283,15 @@ def mesh_assets() -> dict[str, bytes]:
   }
 
 
-def make_robot_xml(seed: int, delta_scale: float = 1.0,
-                   x_knee_fraction: float = 0.5) -> tuple[str, float, float]:
+def make_robot_xml(seed: int, delta_scale: float = 1.0, x_knee_fraction: float = 0.5,
+                   params: dict | None = None) -> tuple[str, float, float]:
   """Generate one random quadruped.
 
   Returns (MJCF string, total mass [kg], max joint velocity [rad/s]). MJCF has
   no joint velocity limit, so the velocity create_robot gives every revolute
   joint (PyBullet maxJointVelocity) is returned for the actuators to enforce.
   """
-  rec, dynamics, x_knee = generate_morphology(seed, delta_scale, x_knee_fraction)
+  rec, dynamics, x_knee = generate_morphology(seed, delta_scale, x_knee_fraction, params)
   total_mass = float(sum(d[0] for d in dynamics.values()))
   max_joint_velocity = float(max(rec.max_joint_velocities.values()))
   xml = ET.tostring(build_mjcf(rec, dynamics, seed, x_knee), encoding="unicode")

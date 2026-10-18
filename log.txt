@@ -3,6 +3,35 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
+2026-10-18  Rough terrain scaled per env to each robot (replaces the size bins)
+  - What: tasks/velocity/terrain.py rewritten. The grid is mjlab's
+    ROUGH_TERRAINS_CFG at Go2 scale, 10 rows x 7 cols (one column per type,
+    8 m tiles). Startup event scale_terrain (after morphology) scales the
+    whole grid in each world by the robot's s_L, snapped to 24 log-spaced
+    scales over 0.15-5 (neighbours 16% apart): box geoms get geom_size /
+    rbound / aabb / pos x s; heightfield tiles are compiled 24 times with the
+    same heights and the hfield size baked per scale (_ScaledCopies), and per
+    world only the copy of its scale stays in place, the rest are parked
+    1000 m down. Env origins = terrain origin x s (scale_env_origins, also
+    used by terrain_levels_vel). Types are shared out evenly over envs and
+    over sizes (envs sorted by s_L take the types in turn). Play's reset event
+    picks a random row/type. vis_rough.py: --bin removed; the viewer copies
+    env 0's scaled terrain into the CPU model.
+  - Why: with bins, robots near a bin edge got terrain up to ~1.5x off their
+    size, and a robot walking off its tile landed on another bin's tile.
+    Now every tile in a world is that robot's size (within 8%), so leaving
+    the tile is harmless. mujoco_warp keeps one hfield size per hfield (not
+    per world), hence the per-scale copies; terrain geoms are static, so
+    their world positions (data.geom_xpos, set once in make_data) are
+    written directly.
+  - Cost: ngeom 2660 -> 1514 (960 hfield copies, 1474 terrain geoms).
+  - Checked: scratch script, 14 robots s_L 0.17-3.19: 2 envs per type, each
+    world has exactly 40 hfield geoms in place (4 hf types x 10 rows); after
+    2 s of zero actions every base sits 0.22-0.28 s_L above its origin with
+    feet in contact (before the copy-position fix the hf-type robots fell
+    through). train_test.py --task rough, 8 robots, 3 s: no crash/NaN.
+    vis_rough.py --viewer False runs.
+
 2026-10-17  Per-group episode returns leave out episodes under 0.5 s (6d08130)
   - What: tasks/velocity/rl/runner.py, MIN_EPISODE_S = 0.5: episodes shorter
     than that are not added to Morphology/mean_reward_<group> (nor the --plot

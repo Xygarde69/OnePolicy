@@ -61,8 +61,11 @@ def terrain_levels_vel(
   )
   move_down *= ~move_up
 
-  # Update terrain levels.
+  # Update terrain levels; origins in the env's own terrain scale.
+  from tasks.velocity.terrain import scale_env_origins
+
   terrain.update_env_origins(env_ids, move_up, move_down)
+  scale_env_origins(env, env_ids)
 
   return torch.mean(terrain.terrain_levels.float())
 

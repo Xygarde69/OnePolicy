@@ -24,7 +24,7 @@ from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
 
 import tasks.velocity.mdp as morph_mdp
 from tasks.velocity.mdp import UniformVelocityCommandCfg
-from tasks.velocity.terrain import assign_terrain_bins
+from tasks.velocity.terrain import scale_terrain
 from tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
 TerrainType = Literal["rough", "obstacles"]
@@ -56,7 +56,7 @@ def morph_quadruped_rough_env_cfg(
         "nominal_leg_length": NOMINAL_LEG_LENGTH,
       },
     ),
-    "terrain_bins": EventTermCfg(func=assign_terrain_bins, mode="startup"),
+    "terrain_scale": EventTermCfg(func=scale_terrain, mode="startup"),
     **cfg.events,
   }
 
@@ -162,7 +162,7 @@ def morph_quadruped_rough_env_cfg(
     cfg.events.pop("push_robot", None)
     cfg.curriculum = {}
     cfg.events["randomize_terrain"] = EventTermCfg(
-      func=assign_terrain_bins, mode="reset", params={"randomize": True})
+      func=scale_terrain, mode="reset", params={"randomize": True})
 
     if cfg.scene.terrain is not None:
       if cfg.scene.terrain.terrain_generator is not None:

@@ -35,6 +35,21 @@ export default function Home() {
 
       <Marquee items={["MuJoCo-Warp", "PPO", "Froude scaling", "4096 robots per batch", ">> and >< knees", "WASD to walk"]} />
 
+      <section className="mx-auto w-full max-w-7xl px-4 pt-12">
+        <div className="rounded-sm border-3 border-ink bg-yellow p-6 shadow-brutal sm:p-8">
+          <h2 className="font-heading text-3xl uppercase sm:text-4xl">
+            What is <OnePolicy />?
+          </h2>
+          <p className="mt-4 max-w-4xl text-lg font-medium">
+            <OnePolicy /> is a single locomotion policy that walks a huge range of quadrupeds: from a one-ton
+            giant down to a robot weighing a few grams, with leg lengths that differ by more than 25×. There is no
+            per-robot training and no fine-tuning. The same network reads each robot&apos;s body and limits and
+            works out how to move it, so you can change a robot&apos;s size, mass or proportions and it will
+            still walk.
+          </p>
+        </div>
+      </section>
+
       <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-12 md:grid-cols-2">
         <ChoiceCard
           index={0}

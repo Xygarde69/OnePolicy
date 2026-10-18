@@ -3,7 +3,15 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-18  README: minimum commands to run server.py and OnePolicy
+2026-10-18  Front page: short "What is OnePolicy?" description
+  - What: Web/ui/app/page.tsx gets a yellow card under the marquee saying
+    OnePolicy is one policy for a wide range of quadrupeds (one ton down to
+    a few grams, leg lengths differing by more than 25x), no per-robot
+    training.
+  - Why: the front page didn't say plainly what OnePolicy is.
+  - Checked: npm run build passes.
+
+2026-10-18  README: minimum commands to run server.py and OnePolicy (1975921)
   - What: README.md gets a "Run OnePolicy (minimum)" section (clone, uv venv,
     pip install, npm build, server.py, open localhost:8000) and a Contents
     link to it.

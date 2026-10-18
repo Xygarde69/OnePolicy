@@ -12,8 +12,8 @@ Two flows (ui/):
     tweak reward weights / limits / morphology conditions, run train.py here,
     watch its stats live, download the checkpoints (or import a .pt).
   OnePolicy: a bundled, generated (sliders) or uploaded robot, walked by
-    OnePolicy/OnePolicy.pt in play.py's viser viewer, driven with WASD + arrows
-    (play.py --command-port).
+    Web/OnePolicy/OnePolicy.pt (run 2026-10-17_17-48-07, model_10000) in
+    play.py's viser viewer, driven with WASD + arrows (play.py --command-port).
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ REPO = WEB.parent
 TRAINING = REPO / "Training"
 WORKSPACE = WEB / "workspace"
 UI_BUILD = WEB / "ui" / "out"
-ONEPOLICY = REPO / "OnePolicy" / "OnePolicy.pt"
+ONEPOLICY = WEB / "OnePolicy" / "OnePolicy.pt"
 RUNS = TRAINING / "logs" / "rsl_rl" / "morph_quadruped_velocity"
 sys.path.insert(0, str(TRAINING))
 sys.path.insert(0, str(WEB))
@@ -588,7 +588,7 @@ def api_import_policy(body: dict) -> dict:
 
 
 def download(query: dict) -> tuple[bytes, str, str]:
-  """A checkpoint, ONNX or plot from the runs or OnePolicy/: (data, type, name)."""
+  """A checkpoint, ONNX or plot from the runs or Web/OnePolicy/: (data, type, name)."""
   path = Path((query.get("path") or [""])[0]).resolve()
   roots = (RUNS.resolve(), ONEPOLICY.parent.resolve())
   if not any(r in path.parents for r in roots) or path.suffix not in (".pt", ".onnx", ".csv", ".png"):

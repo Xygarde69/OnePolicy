@@ -3,7 +3,20 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-18  Rough terrain scaled per env to each robot (replaces the size bins)
+2026-10-18  Web UI uses model_10000 as OnePolicy: Web/OnePolicy/
+  - What: Web/OnePolicy/ (new): OnePolicy.pt = Training/logs/.../
+    2026-10-17_17-48-07/model_10000.pt (sha256 5c91fcd9...), OnePolicy.onnx =
+    that run's policy.onnx, params/env.yaml + agent.yaml and
+    morphology_seed.txt of the run. Web/server.py: ONEPOLICY now points at
+    Web/OnePolicy/OnePolicy.pt, so the web UI's default policy, the
+    "fine-tune OnePolicy" start point and the downloads all use it.
+  - Why: replaces model_1200 as the web harness's OnePolicy.
+  - Checked: same actor/critic shapes as model_1200 (51 / 78 inputs);
+    policy.onnx's weights match model_10000 (not model_9900); server.py
+    lists it first in checkpoints() and download() serves it. onboard.py
+    --no-viewer with it: go2, anymal_c, spot stand and walk (PASS).
+
+2026-10-18  Rough terrain scaled per env to each robot (replaces the size bins) (e2f7e39)
   - What: tasks/velocity/terrain.py rewritten. The grid is mjlab's
     ROUGH_TERRAINS_CFG at Go2 scale, 10 rows x 7 cols (one column per type,
     8 m tiles). Startup event scale_terrain (after morphology) scales the

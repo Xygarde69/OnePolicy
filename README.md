@@ -58,7 +58,7 @@ seen the later command curriculum (fast commands, from iteration 5000).
 
 ## Run OnePolicy (minimum)
 
-Needs Linux, an NVIDIA GPU, git, [uv](https://docs.astral.sh/uv/) and
+Needs an NVIDIA GPU, git, [uv](https://docs.astral.sh/uv/) and
 Node.js >= 20.
 
 ```bash

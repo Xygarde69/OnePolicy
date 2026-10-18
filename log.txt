@@ -3,7 +3,16 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
-2026-10-18  Web UI uses model_10000 as OnePolicy: Web/OnePolicy/
+2026-10-18  README: minimum commands to run server.py and OnePolicy
+  - What: README.md gets a "Run OnePolicy (minimum)" section (clone, uv venv,
+    pip install, npm build, server.py, open localhost:8000) and a Contents
+    link to it.
+  - Why: one short command sequence for people who just want to run the web
+    UI and walk a robot with OnePolicy.
+  - Checked: commands match the Setup and Web UI sections; Web/ui/out is
+    git-ignored, so the npm build step is needed.
+
+2026-10-18  Web UI uses model_10000 as OnePolicy: Web/OnePolicy/ (68cd0c7)
   - What: Web/OnePolicy/ (new): OnePolicy.pt = Training/logs/.../
     2026-10-17_17-48-07/model_10000.pt (sha256 5c91fcd9...), OnePolicy.onnx =
     that run's policy.onnx, params/env.yaml + agent.yaml and

@@ -56,9 +56,27 @@ Results on the bundled robots are in [Robot compatibility](#robot-compatibility)
 It is an early checkpoint: it walks every bundled robot at 0.5 m/s but has not
 seen the later command curriculum (fast commands, from iteration 5000).
 
+## Run OnePolicy (minimum)
+
+Needs Linux, an NVIDIA GPU, git, [uv](https://docs.astral.sh/uv/) and
+Node.js >= 20.
+
+```bash
+git clone https://github.com/Xygarde69/OnePolicy.git && cd OnePolicy
+uv venv .venv --python 3.11
+uv pip install --python .venv/bin/python -r requirements.txt
+cd Web/ui && npm install && npm run build && cd ..
+../.venv/bin/python server.py
+```
+
+Open http://localhost:8000, choose **OnePolicy**, pick a robot and drive it
+with W/A/S/D and ←/→.
+
 ---
 
 ## Contents
+
+- [Run OnePolicy (minimum)](#run-onepolicy-minimum)
 
 - [The policy](#the-policy-onepolicyonepolicypt)
 - [Repository layout](#repository-layout)

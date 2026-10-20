@@ -4,7 +4,8 @@ Before training, one random GenLoco quadruped is generated and compiled per
 env, so env i simulates robot i:
 
   python train.py --num-envs 4096                # flat terrain
-  python train.py --num-envs 4096 --task rough   # rough terrain
+  python train.py --num-envs 4096 --task rough   # rough terrain, 10 terrain batches
+  python train.py --num-envs 4096 --task rough --terrain-scales 1.0   # one grid
   python train.py --num-envs 4096 --morphology.seed 7
   python train.py --num-envs 4096 --plot         # also plot the mean reward
   python train.py --num-envs 4096 --generalise   # 1/2 generated, 1/2 real robots
@@ -25,6 +26,15 @@ all sims at once (tasks/velocity/rl/multi_env.py). With --generalise-proxies
 True, real robots are instead rebuilt in the generated structure
 (generation/proxy.py): one sim, faster, but an approximation of the real
 model. Episode reward is logged per robot type.
+
+On rough terrain the robots are split into terrain batches (--terrain-scales,
+default 0.3 0.5 0.7 1 1.5 2 3; the generator keeps legs within 0.225-3.5x
+Go2's): each robot goes to the scale nearest its leg length vs Go2's (0.25 and
+0.35 both go to 0.3), and each batch is its own sim on mjlab's rough grid
+scaled by that value, placed and moved through the rows as Go2 is in Go2 units
+(curriculum: half of the batch's scaled patch times the robot's command level
+to move up). Real robots (--generalise) train on the batch nearest their size. Episode reward is
+logged per batch.
 
 With --plot, the mean episode reward per iteration is written to
 <log_dir>/mean_reward.csv and drawn into <log_dir>/mean_reward.png (refreshed
@@ -58,8 +68,8 @@ from mjlab.utils.os import dump_yaml, get_checkpoint_path  # noqa: E402
 from mjlab.utils.torch import configure_torch_backends  # noqa: E402
 from mjlab.utils.wrappers import VideoRecorder  # noqa: E402
 
-from assets.morph_quadruped.constants import INIT_JOINT_POS  # noqa: E402
-from generation.bank import BANK_FILE, MorphologyGenCfg, generate_bank  # noqa: E402
+from assets.morph_quadruped.constants import INIT_JOINT_POS, NOMINAL_LEG_LENGTH  # noqa: E402
+from generation.bank import BANK_FILE, MorphologyGenCfg, generate_bank, subset_bank  # noqa: E402
 from generation.catalog import find_robot, real_robot_bank  # noqa: E402
 from generation.proxy import make_proxy  # noqa: E402
 from tasks.velocity.config.morph_quadruped import (  # noqa: E402
@@ -71,9 +81,25 @@ from tasks.velocity.config.morph_quadruped import (  # noqa: E402
 )
 from tasks.velocity.rl import MultiVecEnv, VelocityOnPolicyRunner  # noqa: E402
 from tasks.velocity.rl.symmetry import mirror  # noqa: E402
+from tasks.velocity.velocity_env_cfg import (  # noqa: E402
+  TERRAIN_BATCH_SCALES,
+  nearest_terrain_scale,
+  scale_terrain,
+)
 
 Task = Literal["flat", "rough"]
 ENV_CFGS = {"flat": morph_quadruped_flat_env_cfg, "rough": morph_quadruped_rough_env_cfg}
+
+
+@dataclass(frozen=True)
+class Sim:
+  """One batched sim: a robot bank on one terrain scale."""
+
+  name: str
+  bank_dir: Path
+  pose: dict | None = None
+  """Default joint pose of a real robot's own model (None: generated)."""
+  terrain_scale: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -100,6 +126,13 @@ class TrainConfig:
   generalise_proxies: bool = False
   """Train on proxies of the real robots (their numbers in the generated
   structure, one sim) instead of their own models (one extra sim each)."""
+  terrain_scales: tuple[float, ...] = TERRAIN_BATCH_SCALES
+  """Rough task: terrain batches. Each robot goes to the batch whose scale is
+  nearest its leg length vs Go2's; each batch is its own sim on mjlab's grid
+  scaled by that value (patch size, steps, noise, waves, height scan, spawn
+  offset), with Go2's placement and curriculum (move up after half of Go2's
+  patch times the robot's speed scale). One value puts every robot on that
+  one grid (1.0: mjlab's grid)."""
   symmetry: bool = True
   """Left-right mirror data augmentation in PPO (tasks/velocity/rl/symmetry.py).
   The generated robots are left-right symmetric, so every mirrored sample is a
@@ -112,10 +145,9 @@ class TrainConfig:
     return TrainConfig(env=ENV_CFGS[task](), agent=morph_quadruped_ppo_runner_cfg())
 
 
-def run_train(cfg: TrainConfig, log_dir: Path,
-              real_banks: tuple[tuple[str, Path, dict], ...] = ()) -> None:
-  """real_banks: (name, bank dir, default pose) of each real robot trained on
-  its own model (--generalise), one extra sim each."""
+def run_train(cfg: TrainConfig, log_dir: Path, sims: tuple[Sim, ...]) -> None:
+  """sims: the generated robots' terrain batches, then each real robot trained
+  on its own model (--generalise); PPO learns from all of them at once."""
   cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
   if cuda_visible == "":
     device = "cpu"
@@ -145,9 +177,32 @@ def run_train(cfg: TrainConfig, log_dir: Path,
   if rank == 0:
     print(f"[INFO] Logging experiment in directory: {log_dir}")
 
-  env = ManagerBasedRlEnv(
-    cfg=cfg.env, device=device, render_mode="rgb_array" if cfg.video else None
-  )
+  envs = []
+  for i, sim in enumerate(sims):
+    sim_cfg = copy.deepcopy(cfg.env)
+    sim_cfg.scene.num_envs = len(np.load(sim.bank_dir / BANK_FILE)["seeds"])
+    sim_cfg.seed = seed + 1000 * i
+    set_morphologies(sim_cfg, sim.bank_dir, sim.pose)
+    if sim.pose is not None:
+      drop_body_contact_if_unmatched(sim_cfg, sim.bank_dir / "env_00000.xml")
+    scale_terrain(sim_cfg, sim.terrain_scale)
+    if len(sims) > 1:
+      print(f"[INFO] Building the sim of {sim.name} ({sim_cfg.scene.num_envs} envs)",
+            flush=True)
+    env = ManagerBasedRlEnv(cfg=sim_cfg, device=device,
+                            render_mode="rgb_array" if cfg.video and i == 0 else None)
+    # Only record videos on rank 0 to avoid multiple workers writing to the same files.
+    if cfg.video and i == 0 and rank == 0:
+      env = VideoRecorder(
+        env,
+        video_folder=Path(log_dir) / "videos" / "train",
+        step_trigger=lambda step: step % cfg.video_interval == 0,
+        video_length=cfg.video_length,
+        disable_logger=True,
+      )
+      print("[INFO] Recording videos during training.")
+    envs.append(RslRlVecEnvWrapper(env, clip_actions=cfg.agent.clip_actions))
+  env = envs[0] if len(envs) == 1 else MultiVecEnv(envs)
 
   log_root_path = log_dir.parent  # Go up from specific run dir to experiment dir.
 
@@ -157,31 +212,6 @@ def run_train(cfg: TrainConfig, log_dir: Path,
     resume_path = get_checkpoint_path(
       log_root_path, cfg.agent.load_run, cfg.agent.load_checkpoint
     )
-
-  # Only record videos on rank 0 to avoid multiple workers writing to the same files.
-  if cfg.video and rank == 0:
-    env = VideoRecorder(
-      env,
-      video_folder=Path(log_dir) / "videos" / "train",
-      step_trigger=lambda step: step % cfg.video_interval == 0,
-      video_length=cfg.video_length,
-      disable_logger=True,
-    )
-    print("[INFO] Recording videos during training.")
-
-  env = RslRlVecEnvWrapper(env, clip_actions=cfg.agent.clip_actions)
-  if real_banks:
-    envs = [env]
-    for i, (name, bank_dir, pose) in enumerate(real_banks):
-      real_cfg = copy.deepcopy(cfg.env)
-      real_cfg.scene.num_envs = len(np.load(bank_dir / BANK_FILE)["seeds"])
-      real_cfg.seed = seed + 1000 * (i + 1)
-      set_morphologies(real_cfg, bank_dir, pose)
-      drop_body_contact_if_unmatched(real_cfg, bank_dir / "env_00000.xml")
-      print(f"[INFO] Building the sim of {name} ({real_cfg.scene.num_envs} envs)", flush=True)
-      envs.append(RslRlVecEnvWrapper(ManagerBasedRlEnv(cfg=real_cfg, device=device),
-                                     clip_actions=cfg.agent.clip_actions))
-    env = MultiVecEnv(envs)
 
   agent_cfg = asdict(cfg.agent)
   # The runner gets its own copy: rsl_rl adds the symmetry function and the env
@@ -248,6 +278,33 @@ def generalise_split(num_envs: int, fraction: float, robots: tuple[str, ...],
   return split
 
 
+def _length_scale(bank_dir: Path) -> np.ndarray:
+  """Leg length vs Go2's of every robot in a bank."""
+  return np.load(bank_dir / BANK_FILE)["leg_length"] / NOMINAL_LEG_LENGTH
+
+
+def terrain_batches(bank_dir: Path, scales: tuple[float, ...], out_root: Path) -> list[Sim]:
+  """Split the generated robots into one sim per terrain scale: each robot goes
+  to the scale nearest its leg length vs Go2's. Empty batches are left out."""
+  if len(scales) == 1:
+    return [Sim("generated", bank_dir, terrain_scale=scales[0])]
+  length = _length_scale(bank_dir)
+  batch = nearest_terrain_scale(length, scales)
+  sims = []
+  print(f"[INFO] Terrain batches ({len(length)} robots, leg length vs Go2):", flush=True)
+  for k, scale in enumerate(scales):
+    ids = np.flatnonzero(batch == k)
+    if len(ids) == 0:
+      print(f"[INFO]   x{scale:<5g}    0 robots (no sim)", flush=True)
+      continue
+    name = f"terrain_x{scale:g}"
+    subset_bank(bank_dir, ids, out_root / name, source=name)
+    sims.append(Sim(name, out_root / name, terrain_scale=scale))
+    print(f"[INFO]   x{scale:<5g} {len(ids):4d} robots "
+          f"({length[ids].min():.2f}-{length[ids].max():.2f})", flush=True)
+  return sims
+
+
 def launch_training(args: TrainConfig):
   # Create log directory once before launching workers.
   log_root_path = Path("logs") / "rsl_rl" / args.agent.experiment_name
@@ -259,6 +316,11 @@ def launch_training(args: TrainConfig):
   # Procedurally generate and compile one robot per env, before any worker starts.
   if args.num_envs is not None:
     args.env.scene.num_envs = args.num_envs
+  terrain = args.env.scene.terrain
+  rough = terrain is not None and terrain.terrain_generator is not None
+  scales = tuple(args.terrain_scales) if rough else (1.0,)
+  if not scales or min(scales) <= 0:
+    raise SystemExit(f"--terrain-scales must be > 0, got {scales}.")
   # The robots are only read while the envs are built, but are kept until
   # training ends (multi-GPU workers build their envs later).
   morphology_dir = Path(tempfile.mkdtemp(prefix="morphologies_"))
@@ -267,7 +329,7 @@ def launch_training(args: TrainConfig):
                               args.generalise_robots, args.generalise_proxies)
              if args.generalise else {})
     proxies = split if args.generalise_proxies else None
-    real_banks = []
+    real_sims = []
     if split and not args.generalise_proxies:
       # Real models first: a robot that can't be adapted fails before the
       # long generation step.
@@ -278,23 +340,31 @@ def launch_training(args: TrainConfig):
         pose, notes = real_robot_bank(name, count, bank_dir, INIT_JOINT_POS)
         print(f"[INFO] {name} (own model) x {count}"
               + "".join(f"\n[INFO]   {n}" for n in notes), flush=True)
-        real_banks.append((name, bank_dir, pose))
+        real_sims.append(Sim(name, bank_dir, pose))
       args.env.scene.num_envs -= sum(split.values())
-    generate_bank(args.env.scene.num_envs, morphology_dir / "generated",
-                  args.morphology, INIT_JOINT_POS, proxies)
+    generated = morphology_dir / "generated"
+    generate_bank(args.env.scene.num_envs, generated, args.morphology, INIT_JOINT_POS,
+                  proxies)
+    sims = terrain_batches(generated, scales, morphology_dir)
+    # A real robot trains on the terrain batch nearest its own size.
+    for sim in real_sims:
+      scale = scales[int(nearest_terrain_scale(_length_scale(sim.bank_dir)[0], scales))]
+      sims.append(replace(sim, terrain_scale=scale))
+      if len(scales) > 1:
+        print(f"[INFO] {sim.name} trains on terrain x{scale:g}", flush=True)
     log_dir.mkdir(parents=True, exist_ok=True)
-    base_seed = int(np.load(morphology_dir / "generated" / BANK_FILE)["seeds"][0])
+    base_seed = int(np.load(generated / BANK_FILE)["seeds"][0])
     kind = "proxies" if proxies else "real models"
     (log_dir / "morphology_seed.txt").write_text(
       f"{base_seed}\n" + (f"{kind} {split}\n" if split else ""))
-    set_morphologies(args.env, morphology_dir / "generated")
-    _launch(args, log_dir, tuple(real_banks))
+    set_morphologies(args.env, generated)
+    _launch(args, log_dir, tuple(sims))
   finally:
     shutil.rmtree(morphology_dir, ignore_errors=True)
     print(f"[INFO] Removed generated robots in {morphology_dir}", flush=True)
 
 
-def _launch(args: TrainConfig, log_dir: Path, real_banks: tuple = ()) -> None:
+def _launch(args: TrainConfig, log_dir: Path, sims: tuple[Sim, ...]) -> None:
   # Select GPUs based on CUDA_VISIBLE_DEVICES and user specification.
   selected_gpus, num_gpus = select_gpus(args.gpu_ids)
 
@@ -307,7 +377,7 @@ def _launch(args: TrainConfig, log_dir: Path, real_banks: tuple = ()) -> None:
 
   if num_gpus <= 1:
     # CPU or single GPU: run directly without torchrunx.
-    run_train(args, log_dir, real_banks)
+    run_train(args, log_dir, sims)
   else:
     # Multi-GPU: use torchrunx.
     import torchrunx
@@ -331,7 +401,7 @@ def _launch(args: TrainConfig, log_dir: Path, real_banks: tuple = ()) -> None:
       workers_per_host=num_gpus,
       backend=None,  # Let rsl_rl handle process group initialization.
       copy_env_vars=torchrunx.DEFAULT_ENV_VARS_FOR_COPY + ("MUJOCO*",),
-    ).run(run_train, args, log_dir, real_banks)
+    ).run(run_train, args, log_dir, sims)
 
 
 def main():
@@ -339,16 +409,20 @@ def main():
   task_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
   task_parser.add_argument("--task", choices=list(ENV_CFGS), default="flat")
   # mjlab's tyro flags need `--plot True` and `--x "(a,b)"`; accept bare
-  # `--plot`, bare `--generalise` (0.5) and `--generalise-robots a b` / `a,b`.
+  # `--plot`, bare `--generalise` (0.5), `--generalise-robots a b` / `a,b` and
+  # `--terrain-scales 0.5 1 2`.
   task_parser.add_argument("--plot", nargs="?", const="True", default="False",
                            choices=["True", "False"])
   task_parser.add_argument("--generalise", nargs="?", const=0.5, default=0.0,
                            type=float)
   task_parser.add_argument("--generalise-robots", nargs="+")
+  task_parser.add_argument("--terrain-scales", nargs="+", type=float,
+                           default=list(TERRAIN_BATCH_SCALES))
   task_args, remaining_args = task_parser.parse_known_args()
   default = replace(TrainConfig.from_task(task_args.task),
                     plot=task_args.plot == "True",
-                    generalise=task_args.generalise)
+                    generalise=task_args.generalise,
+                    terrain_scales=tuple(task_args.terrain_scales))
   if task_args.generalise_robots:
     default = replace(default, generalise_robots=tuple(
       r for arg in task_args.generalise_robots for r in arg.split(",") if r))

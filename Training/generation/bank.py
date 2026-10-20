@@ -15,6 +15,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import xml.etree.ElementTree as ET
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -263,6 +264,24 @@ def single_robot_bank(xml: str, assets: dict[str, bytes], out_dir: Path,
   return _save_bank(out_dir, model, [-1] * copies,
                     {k: [v] * copies for k, v in scalars.items()},
                     {f: [v] * copies for f, v in fields.items()}, [source] * copies)
+
+
+_NAME_KEYS = ("body_names", "geom_names", "site_names", "joint_names")
+
+
+def subset_bank(bank_dir: Path, ids, out_dir: Path, source: str | None = None) -> Path:
+  """Bank of robots `ids` of the bank in `bank_dir`: env j of the new bank is
+  robot ids[j] (train.py terrain batches). `source` relabels them all."""
+  out_dir.mkdir(parents=True, exist_ok=True)
+  bank = np.load(bank_dir / BANK_FILE)
+  data = {k: bank[k] if k in _NAME_KEYS else bank[k][ids] for k in bank.files}
+  if source is not None:
+    data["sources"] = np.array([source] * len(ids))
+  for j, i in enumerate(ids):
+    shutil.copyfile(bank_dir / f"env_{i:05d}.xml", out_dir / f"env_{j:05d}.xml")
+  bank_path = out_dir / BANK_FILE
+  np.savez(bank_path, **data)
+  return bank_path
 
 
 def generate_bank(num_envs: int, out_dir: Path, cfg: MorphologyGenCfg,

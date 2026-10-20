@@ -5,6 +5,10 @@ Robot-specific configurations call the factory and customize as needed.
 """
 
 import math
+from dataclasses import dataclass, replace
+
+import mujoco
+import numpy as np
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
@@ -23,12 +27,151 @@ from mjlab.scene import SceneCfg
 from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.terrains import TerrainEntityCfg
+from mjlab.terrains.config import ROUGH_TERRAINS_CFG
+from mjlab.terrains.terrain_generator import (
+  SubTerrainCfg,
+  TerrainGeneratorCfg,
+  TerrainGeometry,
+  TerrainOutput,
+)
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
 import tasks.velocity.mdp as mdp
-from tasks.velocity.terrain import scaled_rough_terrain_cfg
 from tasks.velocity.mdp import UniformVelocityCommandCfg
+
+
+# Terrain generator and sub-terrain fields that are lengths [m] (or ranges of
+# them), scaled by `scale_terrain`. The rest (proportions, slopes, num_waves,
+# thickness ratios) have no unit and stay. horizontal_scale is scaled too, so a
+# heightfield keeps its number of samples.
+_TERRAIN_LENGTH_FIELDS = (
+  "size", "border_width", "border_height", "step_height_range", "step_width",
+  "platform_width", "noise_range", "noise_step", "downsampled_scale",
+  "amplitude_range", "horizontal_scale", "vertical_scale",
+)
+
+
+# Terrain batches of the rough task (train.py --terrain-scales): every robot
+# trains on mjlab's grid scaled by the value nearest its leg length vs Go2's.
+TERRAIN_BATCH_SCALES = (0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0)
+
+
+def nearest_terrain_scale(length_scale, scales=TERRAIN_BATCH_SCALES):
+  """Index into `scales` of the value nearest (by plain distance) each length
+  scale: 0.25 and 0.35 both go to 0.3. Ties go to the smaller scale."""
+  scales = np.asarray(scales, dtype=float)
+  return np.argmin(np.abs(np.asarray(length_scale, dtype=float)[..., None] - scales), axis=-1)
+
+
+@dataclass(kw_only=True)
+class _BackedTerrainCfg(SubTerrainCfg):
+  """A sub-terrain with a thick box under it, its top at the patch's lowest
+  surface.
+
+  mjlab's inverted-stair pit floor is a zero-height box (total_height -
+  (num_steps + 1) * step_height) and heightfield bases scale with the wave
+  amplitude / noise, so on easy rows the ground is under 1 mm thick: a light
+  robot's small feet pass through it, its calves land and illegal_contact ends
+  every episode within 0.1 s. The backing box never reaches above the surface.
+  """
+
+  inner: SubTerrainCfg
+
+  def function(self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator) -> TerrainOutput:
+    output = replace(self.inner, size=self.size).function(difficulty, spec, rng)
+    tops = []
+    for g in output.geometries:
+      if g.geom is None:
+        continue
+      if g.hfield is not None:
+        tops.append(g.geom.pos[2])  # Elevation 0 (the hfield's lowest surface).
+      elif g.geom.type == mujoco.mjtGeom.mjGEOM_BOX:
+        tops.append(g.geom.pos[2] + g.geom.size[2])
+    depth = self.size[0] / 8
+    backing = spec.body("terrain").add_geom(
+      type=mujoco.mjtGeom.mjGEOM_BOX,
+      size=(self.size[0] / 2, self.size[1] / 2, depth / 2),
+      pos=(self.size[0] / 2, self.size[1] / 2, min(tops) - depth / 2))
+    return replace(output, geometries=[*output.geometries, TerrainGeometry(geom=backing)])
+
+
+def _backed(cfg: TerrainGeneratorCfg) -> TerrainGeneratorCfg:
+  """`cfg` with every sub-terrain but the flat one (a 1 m box) backed."""
+  return replace(cfg, sub_terrains={
+    name: sub if name == "flat" else _BackedTerrainCfg(inner=sub, proportion=sub.proportion)
+    for name, sub in cfg.sub_terrains.items()})
+
+
+def _scaled(value, scale: float):
+  if value is None:
+    return None
+  if isinstance(value, tuple):
+    return tuple(v * scale for v in value)
+  return value * scale
+
+
+def scale_terrain(cfg: ManagerBasedRlEnvCfg, scale: float) -> None:
+  """Scale the rough terrain grid by `scale`, the same for every env.
+
+  Patch size, borders, step heights and widths, noise and wave amplitudes all
+  grow by `scale`; slopes keep their angle. Env origins, the curriculum's
+  move-up distance (half a patch, mdp.terrain_levels_vel) and the play grid follow from these. The
+  height scan (`_scale_height_scan`) and the spawn offset are scaled alike.
+  No-op on flat terrain or at scale 1.
+  """
+  if scale <= 0:
+    raise ValueError(f"Terrain scale must be > 0, got {scale}.")
+  terrain = cfg.scene.terrain
+  if scale == 1.0 or terrain is None or terrain.terrain_generator is None:
+    return
+
+  def scaled_cfg(sub):
+    if isinstance(sub, _BackedTerrainCfg):
+      return replace(sub, inner=scaled_cfg(sub.inner))
+    return replace(sub, **{name: _scaled(getattr(sub, name), scale)
+                           for name in _TERRAIN_LENGTH_FIELDS if hasattr(sub, name)})
+
+  gen = terrain.terrain_generator
+  terrain.terrain_generator = replace(
+    scaled_cfg(gen), sub_terrains={k: scaled_cfg(v) for k, v in gen.sub_terrains.items()})
+  _scale_height_scan(cfg, scale)
+  # Spawn offset from the patch centre: Go2's +-0.5 m on an 8 m patch. Unscaled,
+  # x0.15 robots (1.2 m patches) landed off the centre platform, up a slope or
+  # stair, and started inside the terrain.
+  reset_base = cfg.events.get("reset_base")
+  if reset_base is not None:
+    pose_range = reset_base.params["pose_range"]
+    for axis in ("x", "y"):
+      if axis in pose_range:
+        pose_range[axis] = _scaled(tuple(pose_range[axis]), scale)
+
+
+def _scale_height_scan(cfg: ManagerBasedRlEnvCfg, scale: float) -> None:
+  """Scale the terrain_scan ray grid and its observation to the terrain.
+
+  Same rays (17 x 11), spaced resolution * scale over size * scale, so a robot
+  sees the same stretch of its own terrain at the same detail: denser for small
+  robots, sparser for large ones. max_distance, the observation's 1/max_distance
+  normalisation and its noise (added in metres, before scaling) go with it, so
+  the observation is the same for every batch in Go2 units.
+  """
+  for sensor in cfg.scene.sensors or ():
+    if sensor.name != "terrain_scan":
+      continue
+    assert isinstance(sensor, RayCastSensorCfg)
+    assert isinstance(sensor.pattern, GridPatternCfg)
+    sensor.pattern = replace(sensor.pattern, size=_scaled(sensor.pattern.size, scale),
+                             resolution=sensor.pattern.resolution * scale)
+    sensor.max_distance *= scale
+    for group in cfg.observations.values():
+      term = group.terms.get("height_scan")
+      if term is None:
+        continue
+      term.scale = 1 / sensor.max_distance
+      if isinstance(term.noise, Unoise):
+        term.noise = replace(term.noise, n_min=term.noise.n_min * scale,
+                             n_max=term.noise.n_max * scale)
 
 
 def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
@@ -45,6 +188,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     pattern=GridPatternCfg(size=(1.6, 1.0), resolution=0.1),
     max_distance=5.0,
     exclude_parent_body=True,
+    include_geom_groups=(0,),  # Terrain only, not the robot's own legs and hips.
     debug_vis=True,
     viz=RayCastSensorCfg.VizCfg(show_normals=True),
   )
@@ -495,7 +639,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     scene=SceneCfg(
       terrain=TerrainEntityCfg(
         terrain_type="generator",
-        terrain_generator=scaled_rough_terrain_cfg(),
+        terrain_generator=_backed(ROUGH_TERRAINS_CFG),
         max_init_terrain_level=5,
       ),
       sensors=(terrain_scan,),

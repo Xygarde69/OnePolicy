@@ -3,6 +3,106 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
+2026-10-20  Rough: move-up x command level; terrain batches 0.3-3, generator legs capped
+  - Symptom: every rough run (06-23, 12-20, 13-16, 15-37) drops terrain
+    level from 3.5 to ~0 by iteration ~250 and stays there (15-37 at
+    iteration 1030: 0.15, though 65 % of episodes time out).
+  - Diagnosis: commands are multiplied by the per-robot command level
+    (start 0.5) but move-up stayed Go2's 4 m x speed scale. Simulated
+    perfect tracker, flat, 20 s, random headings, ranges before step 5000:
+    level 0.5 up 15 % / down 49 % (median 2.4 m), 0.66 up 34 % / down 45 %,
+    1.0 up 62 % / down 31 %. The curriculum could only go down.
+  - Fix: terrain_levels_vel move-up = half of the batch's scaled patch
+    (4 m x terrain scale, was 4 m x sqrt(s_L)) x the robot's command level
+    (move-down already uses the actual command). On the speed scale, x0.3
+    robots had to cross ~2 of their 2.4 m patches and x3 robots moved up
+    after 6.9 m of a 24 m patch. Perfect-tracker move-up odds before step
+    5000 now 0.87 (x0.3) ... 0.62 (x1) ... 0.24 (x3), was 0.62 for all;
+    after, 0.97 ... 0.89 ... 0.70. Unused terrain_scale param removed.
+  - Terrain batches 0.15, 4 and 5 removed (TERRAIN_BATCH_SCALES 0.3-3, 7
+    sims instead of 10). quadruped_generator redraws robots whose leg length
+    is outside 0.225-3.5x Go2's (midpoints to the dropped batches; ~90 % of
+    draws kept, scale still 1/4-4). mjcf_fix.TRAINING_SIZE_RANGE 0.24-3.37
+    (kept p1-p99).
+  - Checked: 300 robots from seed 1437162221 measure 0.229-3.49x, batches
+    49/53/41/43/42/45/27. Not yet trained.
+
+2026-10-20  Rough: backing boxes under thin terrain; Go2-unit curriculum; spawn offset scaled
+  - Symptom: run 2026-10-20_12-20-33 (height-scan fix) tracked the previous
+    run exactly (iteration 108: terrain_levels 0.499 vs 0.499, illegal
+    contact 2.24 vs 2.22 per step).
+  - Diagnosis (CPU rollouts of 2026-10-20_06-23-45/model_2000.pt, 28 robots
+    per batch, row 0, 20 s): most robots never die (x0.3 23/28, x0.5 24/28,
+    x1 26/28, x3 24/28); the illegal_contact flood comes from a few robots
+    dying 0.08 s after every reset (~200 times per 20 s each), only on
+    pyramid_stairs_inv, pyramid_stairs and waves. Replay of one (x0.5,
+    0.7 kg-ish, 4 mm feet, "><" knees): its front feet sink 6 cm through the
+    pit floor and the calves land; on the flat column it stands at 0.13 m.
+    Ground thickness under the patch centre, row 0: inverted-stair pit floor
+    0 mm (x0.3) / 0.6 mm (x0.5) / 7 mm (x1) - mjlab makes it a zero-height
+    box, total_height - (num_steps + 1) * step_height - and wave hfield
+    base 0.6-1.5 mm (x0.3-x0.5); flat is a 1 m box.
+  - Fix 1: velocity_env_cfg._BackedTerrainCfg wraps every sub-terrain but
+    flat with a box (patch size / 8 deep) whose top is the patch's lowest
+    surface (box tops, hfield elevation 0). +160 geoms per sim (2124 ->
+    2284). Rays over every patch at x0.5 / x1 / x3: the backing never rises
+    above the surface (0.0000 mm). Same rollouts: x0.3 619 -> 2 illegal
+    contacts (27/28 never die), x0.5 201 -> 2 (two robots still fall on
+    waves / stairs ~0.7 s in, 37 times: the old policy, not the ground).
+  - Fix 2: terrain_levels_vel move-up = half of Go2's patch (grid size /
+    terrain_scale, set by scale_terrain) x the robot's speed scale, replacing
+    "half a scaled patch". Speeds scale with sqrt(s_L) but the episode stays
+    20 s, so half a scaled patch was ~2.2x Go2's effort for x5 (8.9 Go2
+    seconds) and too easy for x0.15. Single grid at 1.0: unchanged.
+  - Fix 3: scale_terrain scales reset_base's +-0.5 m spawn offset by S. CPU
+    spawn check: unscaled, 23-26% of x0.15 spawns on rows 2-9 started on
+    ground > 0.05 S above the origin (into a slope or stair); x0.3+ were fine.
+  - Checked: train.py --task rough on CPU (96 envs, 10 sims, 2 iterations).
+
+2026-10-20  Height scan scaled per terrain batch; foot clearance from the ground under the foot
+  - What: velocity_env_cfg.py scale_terrain also scales the terrain_scan ray
+    grid (same 17 x 11 rays, size and spacing x S: denser for small robots,
+    sparser for large), max_distance, the 1/max_distance normalisation and
+    the +-0.1 m noise (added in metres, before scaling). terrain_scan sees
+    the terrain only (include_geom_groups=(0,)). env_cfgs.py adds one
+    downward ray per foot (foot_ray_<site>, terrain only, starting 1 m above
+    the foot); mdp.foot_heights_above_ground gives foot height above the
+    ground under it, used by foot_clearance, feet_swing_height and the
+    critic's foot_height. Flat drops the foot rays (heights above z = 0).
+  - Why: run 2026-10-20_06-23-45 (2048 envs, 10 terrain batches, stopped at
+    2000): terrain_levels 3.5 -> 0.05 by iteration 1000 and stuck, episodes
+    ~100 of 1000 steps, illegal_contact ~6x time_out; only the x1 robots
+    walked in play. Reward terms are the same on flat and rough (flat is
+    rough minus terrain, height scan and terrain curriculum), but two
+    rough-only parts were in Go2 metres: the height scan (1.6 x 1.0 m at
+    0.1 m: an x0.15 robot's 4.5 cm steps fell between rays and a 1.5 cm step
+    was 0.003 of the observation; an x5 robot saw less than its body) and
+    foot_clearance (foot z above z = 0, so a 0.3 m pyramid top at x1 counted
+    as 0.3 m of clearance). 5 of 187 scan rays also hit the robot's own hip
+    links (visual geoms are group 2).
+  - Checked: GPU terrain_scan matches MuJoCo's CPU mj_ray exactly (all 187
+    rays). Foot rays first hit the calf's visual capsule (the foot site sits
+    inside it) and, for small robots sunk into a stair box, started inside the
+    box and missed it; both fixed (terrain only, raised start). Robots s_L
+    0.3 / 1 / 3 on x0.3 / x1 / x3 stairs: actor obs 238 in every batch,
+    normalised scan ~0.05-0.06 for all, foot height above ground 0-5 mm /
+    0-17 mm / 19-51 mm (foot radius minus sinking); flat unchanged.
+    train.py --task rough (512 envs, 3 it) and --task flat (128, 2 it) run.
+
+2026-10-20  Rough terrain: 10 terrain batches, one sim each (train.py --terrain-scales)
+  - What: the per-robot terrain scaling (3a65612, e2f7e39) is reverted to
+    mjlab's ROUGH_TERRAINS_CFG. train.py splits the robots into batches by
+    the scale nearest (plain distance) their leg length vs Go2's, default
+    0.15 0.3 0.5 0.7 1 1.5 2 3 4 5; each batch is its own sim on the grid
+    scaled by that value (velocity_env_cfg.scale_terrain: lengths x S,
+    slopes kept), placed and curriculum-moved as Go2 (move-up = half a
+    scaled patch, no extra speed factor). Real robots (--generalise) go to
+    the batch nearest their size. Reward logged per batch (sources
+    terrain_x<S>). play.py picks the robot's batch by default; vis_rough.py
+    rewritten for the plain grid, both take --terrain-scale.
+  - Cost: 2048 envs on an RTX 3060 6 GB: 10.2 s/iteration, 5.07 GB, vs
+    2.8 s and 4.83 GB on one grid (10 small sims stepped in turn).
+
 2026-10-18  Front page: short "What is OnePolicy?" description
   - What: Web/ui/app/page.tsx gets a yellow card under the marquee saying
     OnePolicy is one policy for a wide range of quadrupeds (one ton down to

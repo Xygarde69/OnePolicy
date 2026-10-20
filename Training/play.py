@@ -37,6 +37,7 @@ from typing import Literal
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import numpy as np  # noqa: E402
 import torch  # noqa: E402
 import tyro  # noqa: E402
 
@@ -49,7 +50,7 @@ from mjlab.utils.torch import configure_torch_backends  # noqa: E402
 from mjlab.utils.wrappers import VideoRecorder  # noqa: E402
 from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer  # noqa: E402
 
-from assets.morph_quadruped.constants import INIT_JOINT_POS  # noqa: E402
+from assets.morph_quadruped.constants import INIT_JOINT_POS, NOMINAL_LEG_LENGTH  # noqa: E402
 from gamepad import DualSenseGamepad  # noqa: E402
 from generation.catalog import (  # noqa: E402
   QUADRUPEDS_DIR,
@@ -58,6 +59,7 @@ from generation.catalog import (  # noqa: E402
   robot_defaults,
 )
 from generation.bank import (  # noqa: E402
+  BANK_FILE,
   MorphologyGenCfg,
   generate_bank,
   single_robot_bank,
@@ -70,6 +72,11 @@ from tasks.velocity.config.morph_quadruped import (  # noqa: E402
   set_morphologies,
 )
 from tasks.velocity.rl import VelocityOnPolicyRunner  # noqa: E402
+from tasks.velocity.velocity_env_cfg import (  # noqa: E402
+  TERRAIN_BATCH_SCALES,
+  nearest_terrain_scale,
+  scale_terrain,
+)
 
 # Placeholder: path to the robot MJCF to play (overridden by --robot-xml).
 ROBOT_XML = "path/to/your_quadruped.xml"
@@ -94,6 +101,9 @@ class PlayConfig:
   policy: str | None = None
   """Policy checkpoint (model_*.pt). Defaults to the latest one in logs/."""
   task: Literal["flat", "rough"] = "flat"
+  terrain_scale: float | None = None
+  """Scale of the rough terrain grid; default: the train.py terrain batch
+  nearest the robot's leg length vs Go2's."""
   agent: Literal["zero", "random", "trained"] = "trained"
   """'trained' runs --policy; 'zero' / 'random' send zero / random actions."""
   forward: Literal["auto", "+x", "-x", "+y", "-y"] = "auto"
@@ -262,6 +272,13 @@ def _play(cfg: PlayConfig, robot_dir: Path):
 
   env_cfg = (morph_quadruped_flat_env_cfg if cfg.task == "flat"
              else morph_quadruped_rough_env_cfg)(play=True)
+  terrain_scale = cfg.terrain_scale
+  if terrain_scale is None:
+    length = np.load(robot_dir / BANK_FILE)["leg_length"][0] / NOMINAL_LEG_LENGTH
+    terrain_scale = TERRAIN_BATCH_SCALES[int(nearest_terrain_scale(length))]
+  scale_terrain(env_cfg, terrain_scale)
+  if cfg.task == "rough":
+    print(f"[INFO] Rough terrain scaled x{terrain_scale:g}")
   agent_cfg = morph_quadruped_ppo_runner_cfg()
   env_cfg.scene.num_envs = 1
   set_morphologies(env_cfg, robot_dir, pose)

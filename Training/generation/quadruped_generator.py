@@ -35,6 +35,13 @@ hip_link_delta = 0.5  # +-50 %, like the other parts
 # scale by it, masses by its cube.
 max_scale = 4.0
 
+# Leg length (thigh + calf) vs Go2's kept: robots outside are redrawn. The
+# bounds are the midpoints to the terrain batches dropped from train.py
+# (0.15 and 4, 5), so every robot lands in a 0.3-3 batch. Keeps ~90 % of
+# draws; scale itself still spans [1/max_scale, max_scale].
+leg_length_range = (0.225, 3.5)
+max_draws = 1000
+
 max_joint_velocity = 6 * np.pi  # [rad/s] at Go2's size; ~1/sqrt(scale) (Froude)
 
 # create_robot(params=...) keys that replace a random draw. "scale" is the
@@ -66,22 +73,29 @@ def create_robot(p,
 
     #RANDOMIZATIONS
 
-    log_scale = np.log(max_scale) * delta_scale
-    randomized_scale = float(_fixed(params, "scale", np.exp(uniform(-log_scale, log_scale)), 1.0))
+    for _ in range(max_draws):
+        log_scale = np.log(max_scale) * delta_scale
+        randomized_scale = float(_fixed(params, "scale", np.exp(uniform(-log_scale, log_scale)), 1.0))
 
-    x_base, y_base, z_base = uniform(go2_base - base_delta_cur, go2_base + base_delta_cur) * randomized_scale
-    x_base = _fixed(params, "base_length", x_base, go2_base[0] * randomized_scale)
-    y_base = _fixed(params, "base_width", y_base, go2_base[1] * randomized_scale)
-    z_base = _fixed(params, "base_height", z_base, go2_base[2] * randomized_scale)
+        x_base, y_base, z_base = uniform(go2_base - base_delta_cur, go2_base + base_delta_cur) * randomized_scale
+        x_base = _fixed(params, "base_length", x_base, go2_base[0] * randomized_scale)
+        y_base = _fixed(params, "base_width", y_base, go2_base[1] * randomized_scale)
+        z_base = _fixed(params, "base_height", z_base, go2_base[2] * randomized_scale)
 
-    lower_cylinder_radius, lower_cylinder_length = uniform(go2_cylinder - cyl_delta_cur, go2_cylinder + cyl_delta_cur) * randomized_scale
-    # upper_cylinder_radius, upper_cylinder_length = uniform(go2_cylinder - cyl_delta_cur, go2_cylinder + cyl_delta_cur)
-    upper_cylinder_radius = lower_cylinder_radius * uniform(0.75, 1.25)
-    upper_cylinder_length = lower_cylinder_length * uniform(0.75, 1.25)
-    lower_cylinder_radius = _fixed(params, "leg_radius", lower_cylinder_radius, go2_cylinder[0] * randomized_scale)
-    upper_cylinder_radius = _fixed(params, "leg_radius", upper_cylinder_radius, go2_cylinder[0] * randomized_scale)
-    lower_cylinder_length = _fixed(params, "calf_length", lower_cylinder_length, go2_cylinder[1] * randomized_scale)
-    upper_cylinder_length = _fixed(params, "thigh_length", upper_cylinder_length, go2_cylinder[1] * randomized_scale)
+        lower_cylinder_radius, lower_cylinder_length = uniform(go2_cylinder - cyl_delta_cur, go2_cylinder + cyl_delta_cur) * randomized_scale
+        # upper_cylinder_radius, upper_cylinder_length = uniform(go2_cylinder - cyl_delta_cur, go2_cylinder + cyl_delta_cur)
+        upper_cylinder_radius = lower_cylinder_radius * uniform(0.75, 1.25)
+        upper_cylinder_length = lower_cylinder_length * uniform(0.75, 1.25)
+        lower_cylinder_radius = _fixed(params, "leg_radius", lower_cylinder_radius, go2_cylinder[0] * randomized_scale)
+        upper_cylinder_radius = _fixed(params, "leg_radius", upper_cylinder_radius, go2_cylinder[0] * randomized_scale)
+        lower_cylinder_length = _fixed(params, "calf_length", lower_cylinder_length, go2_cylinder[1] * randomized_scale)
+        upper_cylinder_length = _fixed(params, "thigh_length", upper_cylinder_length, go2_cylinder[1] * randomized_scale)
+        leg_length = (upper_cylinder_length + lower_cylinder_length) / (2 * go2_cylinder[1])
+        if leg_length_range[0] <= leg_length <= leg_length_range[1]:
+            break
+    else:
+        raise ValueError(f"No leg length in {leg_length_range} x Go2's in {max_draws} draws; "
+                         f"params {params} fix it outside")
 
     linkMasses = uniform(link_masses - link_masses_delta_cur, link_masses + link_masses_delta_cur) * (randomized_scale**3)
     linkMasses = _fixed(params, "link_mass", linkMasses, link_masses * randomized_scale**3)

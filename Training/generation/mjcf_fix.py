@@ -63,7 +63,7 @@ GO2_MASS = 15.206
 GO2_LEG_LENGTH = 0.426
 GO2_PEAK_TORQUE = {"abduction": 23.5, "hip": 23.5, "knee": 45.0}
 GO2_CALF_MASS_FRACTION = (0.241352 + 0.04) / GO2_MASS
-TRAINING_SIZE_RANGE = (0.17, 4.9)  # leg length / Go2's, p1-p99 of the generator
+TRAINING_SIZE_RANGE = (0.24, 3.37)  # leg length / Go2's, p1-p99 of the generator
 TRAINING_POSE = {"hip": 0.1, "thigh": 0.9, "calf": -1.8}  # constants.INIT_JOINT_POS
 """Training pose: abduction +-0.1 (outwards: + on the right legs), thigh,
 knee. "><" robots negate the rear thigh and knee (knees.py)."""

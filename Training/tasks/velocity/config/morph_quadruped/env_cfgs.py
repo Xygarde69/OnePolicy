@@ -5,6 +5,7 @@ simulates its own generated robot (see `set_morphologies`).
 """
 
 import re
+from dataclasses import dataclass
 from typing import Literal
 
 from pathlib import Path
@@ -17,17 +18,45 @@ from assets.morph_quadruped.constants import (
 )
 from generation.bank import BANK_FILE
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import TerminationTermCfg
 from mjlab.managers.event_manager import EventTermCfg
-from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
+from mjlab.sensor import (
+  ContactMatch,
+  ContactSensorCfg,
+  GridPatternCfg,
+  ObjRef,
+  RayCastSensorCfg,
+)
 
 import tasks.velocity.mdp as morph_mdp
 from tasks.velocity.mdp import UniformVelocityCommandCfg
-from tasks.velocity.terrain import scale_terrain
 from tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
 TerrainType = Literal["rough", "obstacles"]
+
+# One downward ray per foot site, named FOOT_RAY_PREFIX + site name: the ground
+# height under each foot, so foot clearance is measured from the terrain, not
+# from z = 0 (mdp.foot_heights_above_ground).
+FOOT_RAY_PREFIX = "foot_ray_"
+
+
+@dataclass
+class _RaisedRayCfg(GridPatternCfg):
+  """A single downward ray starting `height` [m] above its frame.
+
+  A foot sunk into a stair box would start its ray inside the box, which the
+  ray then ignores. The terrain has no overhangs, so starting well above the
+  foot hits the surface under it.
+  """
+
+  height: float = 1.0
+
+  def generate_rays(self, mj_model, device):
+    offsets, directions = super().generate_rays(mj_model, device)
+    offsets[:, 2] = self.height
+    return offsets, directions
 
 
 def morph_quadruped_rough_env_cfg(
@@ -56,7 +85,6 @@ def morph_quadruped_rough_env_cfg(
         "nominal_leg_length": NOMINAL_LEG_LENGTH,
       },
     ),
-    "terrain_scale": EventTermCfg(func=scale_terrain, mode="startup"),
     **cfg.events,
   }
 
@@ -96,9 +124,21 @@ def morph_quadruped_rough_env_cfg(
     num_slots=1,
     history_length=4,
   )
+  foot_ray_cfgs = tuple(
+    RayCastSensorCfg(
+      name=f"{FOOT_RAY_PREFIX}{site}",
+      frame=ObjRef(type="site", name=site, entity="robot"),
+      pattern=_RaisedRayCfg(size=(0.0, 0.0)),
+      ray_alignment="world",
+      max_distance=21.0,
+      include_geom_groups=(0,),  # Terrain only: the foot starts inside its calf's visual.
+    )
+    for site in site_names
+  )
   cfg.scene.sensors = (cfg.scene.sensors or ()) + (
     feet_ground_cfg,
     nonfoot_ground_cfg,
+    *foot_ray_cfgs,
   )
 
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
@@ -112,6 +152,7 @@ def morph_quadruped_rough_env_cfg(
   cfg.viewer.elevation = -10.0
 
   cfg.observations["critic"].terms["foot_height"].params["asset_cfg"].site_names = site_names
+  cfg.observations["critic"].terms["foot_height"].params["ray_prefix"] = FOOT_RAY_PREFIX
 
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
   cfg.events["base_com"].params["asset_cfg"].body_names = ("base_link",)
@@ -136,6 +177,7 @@ def morph_quadruped_rough_env_cfg(
   cfg.rewards["body_orientation_l2"].params["asset_cfg"].body_names = ("base_link",)
   cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("base_link",)
   cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names
+  cfg.rewards["foot_clearance"].params["ray_prefix"] = FOOT_RAY_PREFIX
   cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
   cfg.rewards["foot_contact_velocity"].params["asset_cfg"].site_names = site_names
   cfg.rewards["base_height"].params["asset_cfg"].site_names = site_names
@@ -162,10 +204,15 @@ def morph_quadruped_rough_env_cfg(
     cfg.events.pop("push_robot", None)
     cfg.curriculum = {}
     cfg.events["randomize_terrain"] = EventTermCfg(
-      func=scale_terrain, mode="reset", params={"randomize": True})
+      func=envs_mdp.randomize_terrain,
+      mode="reset",
+      params={},
+    )
 
     if cfg.scene.terrain is not None:
       if cfg.scene.terrain.terrain_generator is not None:
+        cfg.scene.terrain.terrain_generator.curriculum = False
+        cfg.scene.terrain.terrain_generator.num_cols = 5
         cfg.scene.terrain.terrain_generator.num_rows = 5
         cfg.scene.terrain.terrain_generator.border_width = 10.0
 
@@ -186,10 +233,14 @@ def morph_quadruped_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.scene.terrain.terrain_type = "plane"
   cfg.scene.terrain.terrain_generator = None
 
-  # Remove raycast sensor and height scan (no terrain to scan).
+  # Remove the raycast sensors and height scan (no terrain to scan); foot
+  # heights are above z = 0.
   cfg.scene.sensors = tuple(
-    s for s in (cfg.scene.sensors or ()) if s.name != "terrain_scan"
+    s for s in (cfg.scene.sensors or ())
+    if s.name != "terrain_scan" and not s.name.startswith(FOOT_RAY_PREFIX)
   )
+  cfg.observations["critic"].terms["foot_height"].params["ray_prefix"] = None
+  cfg.rewards["foot_clearance"].params["ray_prefix"] = None
   del cfg.observations["actor"].terms["height_scan"]
   del cfg.observations["critic"].terms["height_scan"]
 

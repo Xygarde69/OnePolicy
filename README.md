@@ -235,6 +235,7 @@ $PY train.py --help                              # all --env.* / --agent.* optio
 |---|---|---|
 | `--num-envs` | `env.scene.num_envs` | Parallel envs, one robot each |
 | `--task` | `flat` | `flat` or `rough` terrain |
+| `--terrain-scales` | `0.3 0.5 0.7 1 1.5 2 3` | Rough task: terrain batches. Each robot goes to the scale nearest its leg length vs Go2's (0.25 and 0.35 → 0.3); each batch is its own sim on mjlab's rough grid scaled by that value (patch size, step heights and widths, noise, waves; slopes keep their angle), with Go2's placement and curriculum on the scaled grid (move up after half of the batch's scaled patch × the robot's command level; the generator keeps legs within 0.225–3.5× Go2's, so every robot has a batch). The height scan (same 187 rays, spacing × scale) and spawn offset scale too; non-flat patches get a backing box so thin floors can't be walked through. Real robots (`--generalise`) go to the batch nearest their size. Reward logged per batch. One value = one grid for every robot (`1.0`: mjlab's grid, as before). About 3.6× slower per iteration than one grid (RTX 3060, 2048 envs: 10.2 s vs 2.8 s; 5.1 vs 4.8 GB). `play.py` defaults to the batch nearest the robot; `play.py`/`vis_rough.py` take `--terrain-scale` |
 | `--morphology.seed` | random | Base seed. Env `i` uses `seed + i` |
 | `--morphology.delta-scale` | `1.0` | Scales every randomization range (0 gives Go2-like robots) |
 | `--morphology.foot-clearance` | `0.02` | Gap between lowest foot and floor at spawn [m] |

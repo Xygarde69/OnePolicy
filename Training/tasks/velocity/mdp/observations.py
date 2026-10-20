@@ -16,11 +16,34 @@ if TYPE_CHECKING:
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
 
 
-def foot_height(
-  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
+def foot_heights_above_ground(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg, ray_prefix: str | None
 ) -> torch.Tensor:
+  """Height of each foot site [B, N] above the ground right below it.
+
+  With `ray_prefix`, the ground is where the downward ray of sensor
+  `<ray_prefix><site name>` hits (rough terrain); without, it is z = 0 (flat
+  plane). A ray that misses counts as ground at the foot.
+  """
   asset: Entity = env.scene[asset_cfg.name]
-  return asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # (num_envs, num_sites)
+  foot_z = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]
+  if ray_prefix is None:
+    return foot_z
+  ids = asset_cfg.site_ids
+  if isinstance(ids, slice):
+    ids = range(len(asset.site_names))[ids]
+  ground_z = torch.stack(
+    [env.scene[f"{ray_prefix}{asset.site_names[i]}"].data.hit_pos_w[:, 0, 2] for i in ids],
+    dim=1)
+  return foot_z - ground_z
+
+
+def foot_height(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ray_prefix: str | None = None,
+) -> torch.Tensor:
+  return foot_heights_above_ground(env, asset_cfg, ray_prefix)  # (num_envs, num_sites)
 
 
 def knee_direction(

@@ -19,6 +19,7 @@ from assets.morph_quadruped.constants import (
   NOMINAL_MASS,
 )
 
+from .observations import foot_heights_above_ground
 from .scaling import get_morph_scales, normalized_command
 
 if TYPE_CHECKING:
@@ -189,17 +190,20 @@ def feet_clearance(
   command_name: str | None = None,
   command_threshold: float = 0.1,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ray_prefix: str | None = None,
 ) -> torch.Tensor:
   """Penalize deviation from target clearance height, weighted by foot velocity.
 
   `target_height` is Go2's foot-centre height [m]: its lift above Go2's foot
   radius is scaled by s_L and the robot's own foot radius added back. Height
   error ~ s_L times foot speed ~ s_L^0.5, so the cost is divided by s_L^1.5.
+  Heights are above the ground under each foot (`ray_prefix`, see
+  foot_heights_above_ground), not above z = 0.
   """
   asset: Entity = env.scene[asset_cfg.name]
   scales = get_morph_scales(env)
   target = scales.foot_radius + (target_height - NOMINAL_FOOT_RADIUS) * scales.length
-  foot_z = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # [B, N]
+  foot_z = foot_heights_above_ground(env, asset_cfg, ray_prefix)  # [B, N]
   foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]  # [B, N, 2]
   vel_norm = torch.norm(foot_vel_xy, dim=-1)  # [B, N]
   delta = torch.abs(foot_z - target[:, None])  # [B, N]
@@ -265,12 +269,12 @@ class feet_swing_height:
     command_name: str,
     command_threshold: float,
     asset_cfg: SceneEntityCfg,
+    ray_prefix: str | None = None,
   ) -> torch.Tensor:
-    asset: Entity = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene[sensor_name]
     command = env.command_manager.get_command(command_name)
     assert command is not None
-    foot_heights = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]
+    foot_heights = foot_heights_above_ground(env, asset_cfg, ray_prefix)
     in_air = contact_sensor.data.found == 0
     self.peak_heights = torch.where(
       in_air,

@@ -7,7 +7,6 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 
-from .scaling import get_morph_scales
 from .velocity_command import UniformVelocityCommandCfg
 
 if TYPE_CHECKING:
@@ -34,6 +33,13 @@ def terrain_levels_vel(
   command_name: str,
   asset_cfg: SceneEntityCfg = _DEFAULT_SCENE_CFG,
 ) -> torch.Tensor:
+  """Go2's terrain curriculum on each batch's own grid.
+
+  Go2 moves up after walking half a patch in an episode. A robot moves up
+  after half of its own (scaled) patch, so it has crossed as much of its
+  terrain as Go2 has of Go2's, times its command level: commands are scaled
+  by the level, so at level 0.5 a perfect tracker ends a 20 s random-heading
+  episode a median 2.4 m out and could rarely move up."""
   asset: Entity = env.scene[asset_cfg.name]
 
   terrain = env.scene.terrain
@@ -49,10 +55,10 @@ def terrain_levels_vel(
     asset.data.root_link_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1
   )
 
-  # Robots that walked far enough progress to harder terrains. The distance is
-  # Go2's, scaled by each robot's speed scale (its commands are scaled alike).
-  speed = get_morph_scales(env).speed[env_ids]
-  move_up = distance > terrain_generator.size[0] / 2 * speed
+  # Robots that walked far enough progress to harder terrains: half of their
+  # batch's patch (scaled with the terrain), times their command level.
+  command_level = env.command_manager.get_term(command_name).command_level[env_ids]
+  move_up = distance > terrain_generator.size[0] / 2 * command_level
 
   # Robots that walked less than half of their required distance go to simpler
   # terrains.
@@ -61,11 +67,8 @@ def terrain_levels_vel(
   )
   move_down *= ~move_up
 
-  # Update terrain levels; origins in the env's own terrain scale.
-  from tasks.velocity.terrain import scale_env_origins
-
+  # Update terrain levels.
   terrain.update_env_origins(env_ids, move_up, move_down)
-  scale_env_origins(env, env_ids)
 
   return torch.mean(terrain.terrain_levels.float())
 

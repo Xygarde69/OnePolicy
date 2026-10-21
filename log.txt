@@ -3,6 +3,25 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
+2026-10-21  No automatic command widening; level 2 by hand (--lvl 2)
+  - What: the velocity_stages / reward_weight stages at step 5000*24 are gone.
+    velocity_env_cfg.TRAINING_LEVELS holds both stages: level 1 (lin x
+    -0.5..1, y +-0.5, yaw +-1; tracking 1 / 1, foot_gait 0.5) for the whole
+    run by default, level 2 (x -1..2, y +-1; tracking 2 / 1.5, foot_gait
+    0.25) with train.py / task_ref.py --lvl 2, meant for resuming a level-1
+    run (--agent.resume True). Play keeps the full ranges.
+  - Why: Unitree's stock Go2 rough run (unitree_rl_mjlab 2026-10-20_21-21-43,
+    same stages) climbed to terrain level 1.27 / linear tracking 0.73 by
+    iteration 5000; at the widening tracking fell to 0.28 within 60
+    iterations, terrain level to 0.05 within 500, and by 10000 it was 0.15 /
+    0.31, gaining ~0.01 / 0.002 per 1000 iterations. Its best checkpoint is
+    model_4900. Widening by hand lets level 2 start from a chosen checkpoint.
+  - Checked: rough and flat configs give the level-1 / level-2 stages and
+    weights; task_ref.py --lvl 2 resuming go2_ref model_100 logs tracking
+    weights 2.0 / 1.5 and foot_gait 0.25 (GPU, 16 envs, 2 iterations).
+    Resuming restarts terrain levels and per-robot command levels (env state
+    is not in the checkpoint).
+
 2026-10-20  Rough: move-up x command level; terrain batches 0.3-3, generator legs capped
   - Symptom: every rough run (06-23, 12-20, 13-16, 15-37) drops terrain
     level from 3.5 to ~0 by iteration ~250 and stays there (15-37 at

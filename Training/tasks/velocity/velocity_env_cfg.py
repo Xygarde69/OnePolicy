@@ -64,6 +64,44 @@ def nearest_terrain_scale(length_scale, scales=TERRAIN_BATCH_SCALES):
   return np.argmin(np.abs(np.asarray(length_scale, dtype=float)[..., None] - scales), axis=-1)
 
 
+# Training levels, picked by hand (train.py --lvl): 1 from scratch, 2 to resume
+# a level-1 policy on Go2's full command ranges. Level 2 used to switch on by
+# itself at iteration 5000; Unitree's Go2 rough run (unitree_rl_mjlab,
+# 2026-10-20_21-21-43) lost its linear tracking there (0.73 -> 0.3) and had not
+# got it back by iteration 10000. Not the per-robot command level.
+TRAINING_LEVELS = {
+  1: {
+    "ranges": {"lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.0, 1.0)},
+    "weights": {"track_linear_velocity": 1.0, "track_angular_velocity": 1.0,
+                "foot_gait": 0.5},
+  },
+  # Tracking weights rise with the ranges so the effort penalties don't make
+  # the robot give up on fast commands (arXiv 2312.17507, Sec. II-E.3), and
+  # stepping is handed over from foot_gait's fixed clock to feet_air_time.
+  2: {
+    "ranges": {"lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
+    "weights": {"track_linear_velocity": 2.0, "track_angular_velocity": 1.5,
+                "foot_gait": 0.25},
+  },
+}
+
+
+def set_training_level(cfg: ManagerBasedRlEnvCfg, level: int) -> None:
+  """Train at `level` of TRAINING_LEVELS for the whole run."""
+  if level not in TRAINING_LEVELS:
+    raise ValueError(f"Training level must be one of {list(TRAINING_LEVELS)}, got {level}.")
+  stage = TRAINING_LEVELS[level]
+  command_vel = cfg.curriculum.get("command_vel")
+  if command_vel is not None:
+    command_vel.params["velocity_stages"] = [{"step": 0, **stage["ranges"]}]
+  for name, weight in stage["weights"].items():
+    term = cfg.curriculum.get(f"{name}_weight")
+    if term is not None:
+      term.params["weight_stages"] = [{"step": 0, "weight": weight}]
+    if name in cfg.rewards:
+      cfg.rewards[name].weight = weight
+
+
 @dataclass(kw_only=True)
 class _BackedTerrainCfg(SubTerrainCfg):
   """A sub-terrain with a thick box under it, its top at the patch's lowest
@@ -115,8 +153,9 @@ def scale_terrain(cfg: ManagerBasedRlEnvCfg, scale: float) -> None:
   """Scale the rough terrain grid by `scale`, the same for every env.
 
   Patch size, borders, step heights and widths, noise and wave amplitudes all
-  grow by `scale`; slopes keep their angle. Env origins, the curriculum's
-  move-up distance (half a patch, mdp.terrain_levels_vel) and the play grid follow from these. The
+  grow by `scale`; slopes keep their angle. Env origins and the play grid
+  follow from these (the curriculum's move-up distance follows the robot's
+  speed scale instead, mdp.terrain_levels_vel). The
   height scan (`_scale_height_scan`) and the spawn offset are scaled alike.
   No-op on flat terrain or at scale 1.
   """
@@ -585,50 +624,22 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.commands_vel,
       params={
         "command_name": "twist",
-        "velocity_stages": [
-          {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.0, 1.0)},
-          {"step": 5000 * 24, "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.0, 1.0)},
-        ],
+        # One stage for the whole run: TRAINING_LEVELS, set_training_level.
+        "velocity_stages": [{"step": 0, **TRAINING_LEVELS[1]["ranges"]}],
       },
     ),
     "command_levels": CurriculumTermCfg(
       func=mdp.command_levels,
       params={"command_name": "twist"},
     ),
-    # Raise tracking with the command range so the effort penalties don't make
-    # the robot give up on fast commands (arXiv 2312.17507, Sec. II-E.3).
-    "track_linear_velocity_weight": CurriculumTermCfg(
-      func=mdp.reward_weight,
-      params={
-        "reward_name": "track_linear_velocity",
-        "weight_stages": [
-          {"step": 0, "weight": 1.0},
-          {"step": 5000 * 24, "weight": 2.0},
-        ],
-      },
-    ),
-    # Hand stepping over from the fixed gait clock to feet_air_time, so each
-    # body can settle on its own cadence.
-    "foot_gait_weight": CurriculumTermCfg(
-      func=mdp.reward_weight,
-      params={
-        "reward_name": "foot_gait",
-        "weight_stages": [
-          {"step": 0, "weight": 0.5},
-          {"step": 5000 * 24, "weight": 0.25},
-        ],
-      },
-    ),
-    "track_angular_velocity_weight": CurriculumTermCfg(
-      func=mdp.reward_weight,
-      params={
-        "reward_name": "track_angular_velocity",
-        "weight_stages": [
-          {"step": 0, "weight": 1.0},
-          {"step": 5000 * 24, "weight": 1.5},
-        ],
-      },
-    ),
+    # Tracking and foot_gait weights of the training level (logged; one stage).
+    **{
+      f"{name}_weight": CurriculumTermCfg(
+        func=mdp.reward_weight,
+        params={"reward_name": name, "weight_stages": [{"step": 0, "weight": weight}]},
+      )
+      for name, weight in TRAINING_LEVELS[1]["weights"].items()
+    },
   }
 
   ##

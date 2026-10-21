@@ -7,6 +7,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 
+from .scaling import get_morph_scales
 from .velocity_command import UniformVelocityCommandCfg
 
 if TYPE_CHECKING:
@@ -31,41 +32,42 @@ def terrain_levels_vel(
   env: ManagerBasedRlEnv,
   env_ids: torch.Tensor,
   command_name: str,
+  up_distance: float = 2.6,
   asset_cfg: SceneEntityCfg = _DEFAULT_SCENE_CFG,
 ) -> torch.Tensor:
-  """Go2's terrain curriculum on each batch's own grid.
+  """Terrain curriculum on the distance a robot can cover.
 
-  Go2 moves up after walking half a patch in an episode. A robot moves up
-  after half of its own (scaled) patch, so it has crossed as much of its
-  terrain as Go2 has of Go2's, times its command level: commands are scaled
-  by the level, so at level 0.5 a perfect tracker ends a 20 s random-heading
-  episode a median 2.4 m out and could rarely move up."""
+  Commands are Go2's ranges times the robot's command level and speed scale
+  sqrt(s_L), with a new random heading every 3-8 s, so a perfect tracker's
+  net distance after an episode is proportional to
+  sqrt(s_L) * command_level. A robot moves up after `up_distance` (Go2 m at
+  level 1) times that, and down after less than half of it or a fall. At 2.6
+  a perfect tracker of any size (0.24-3.37) and level (0.2-1) moves up ~80%
+  and down ~5% of episodes (Monte Carlo of the command sampling). The old
+  thresholds (half a patch, ~ s_L; half the last command x episode time) left
+  even perfect 3x robots moving down more often than up."""
   asset: Entity = env.scene[asset_cfg.name]
 
   terrain = env.scene.terrain
   assert terrain is not None
-  terrain_generator = terrain.cfg.terrain_generator
-  assert terrain_generator is not None
-
-  command = env.command_manager.get_command(command_name)
-  assert command is not None
 
   # Compute the distance the robot walked.
   distance = torch.norm(
     asset.data.root_link_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1
   )
 
-  # Robots that walked far enough progress to harder terrains: half of their
-  # batch's patch (scaled with the terrain), times their command level.
+  # Expected distance for this robot's size and command level.
   command_level = env.command_manager.get_term(command_name).command_level[env_ids]
-  move_up = distance > terrain_generator.size[0] / 2 * command_level
+  required = up_distance * get_morph_scales(env).speed[env_ids] * command_level
 
-  # Robots that walked less than half of their required distance go to simpler
-  # terrains.
-  move_down = (
-    distance < torch.norm(command[env_ids, :2], dim=1) * env.max_episode_length_s * 0.5
-  )
-  move_down *= ~move_up
+  # Robots that walked far enough progress to harder terrains.
+  move_up = distance > required
+
+  # Robots that walked less than half of it, or fell, go to simpler terrains.
+  fell = env.termination_manager.terminated[env_ids]
+  move_down = (distance < 0.5 * required) | fell
+  move_up &= ~fell
+  move_down &= ~move_up
 
   # Update terrain levels.
   terrain.update_env_origins(env_ids, move_up, move_down)

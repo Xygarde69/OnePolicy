@@ -10,6 +10,7 @@ env, so env i simulates robot i:
   python train.py --num-envs 4096 --plot         # also plot the mean reward
   python train.py --num-envs 4096 --generalise   # 1/2 generated, 1/2 real robots
   python train.py --num-envs 4096 --generalise 0.33 --generalise-robots spot go1
+  python train.py --num-envs 4096 --lvl 2 --agent.resume True   # full command ranges
 
 The robots live in a temporary directory that is deleted when training ends;
 the base seed is saved as <log_dir>/morphology_seed.txt (rerun with
@@ -35,6 +36,11 @@ scaled by that value, placed and moved through the rows as Go2 is in Go2 units
 (curriculum: half of the batch's scaled patch times the robot's command level
 to move up). Real robots (--generalise) train on the batch nearest their size. Episode reward is
 logged per batch.
+
+Commands stay in level 1's ranges (TRAINING_LEVELS in velocity_env_cfg.py)
+for the whole run; nothing widens them on its own. To train on the full
+ranges, resume a level-1 run with --lvl 2 (--agent.resume True, plus
+--agent.load-run <run> for a run other than the latest).
 
 With --plot, the mean episode reward per iteration is written to
 <log_dir>/mean_reward.csv and drawn into <log_dir>/mean_reward.png (refreshed
@@ -83,8 +89,10 @@ from tasks.velocity.rl import MultiVecEnv, VelocityOnPolicyRunner  # noqa: E402
 from tasks.velocity.rl.symmetry import mirror  # noqa: E402
 from tasks.velocity.velocity_env_cfg import (  # noqa: E402
   TERRAIN_BATCH_SCALES,
+  TRAINING_LEVELS,
   nearest_terrain_scale,
   scale_terrain,
+  set_training_level,
 )
 
 Task = Literal["flat", "rough"]
@@ -418,8 +426,11 @@ def main():
   task_parser.add_argument("--generalise-robots", nargs="+")
   task_parser.add_argument("--terrain-scales", nargs="+", type=float,
                            default=list(TERRAIN_BATCH_SCALES))
+  task_parser.add_argument("--lvl", type=int, choices=list(TRAINING_LEVELS), default=1)
   task_args, remaining_args = task_parser.parse_known_args()
-  default = replace(TrainConfig.from_task(task_args.task),
+  default = TrainConfig.from_task(task_args.task)
+  set_training_level(default.env, task_args.lvl)
+  default = replace(default,
                     plot=task_args.plot == "True",
                     generalise=task_args.generalise,
                     terrain_scales=tuple(task_args.terrain_scales))

@@ -19,6 +19,10 @@ Commit hashes refer to the commit that made the change.
     OnePolicy_r.
   - Why: the rough run reached terrain level ~4 with few falls; flat-only
     OnePolicy can't load into the rough task (51 vs 238 inputs).
+  - Why no stairs: the policy never learned to climb. Motor torque limits
+    are randomised per robot, and many robots' motors had too little torque
+    to lift the body up a step, so stairs were a task they could not do.
+    Stairs are left out of the UI rather than shown failing.
   - Checked: run stats over its last 500 iterations: terrain_levels 4.07,
     episode length 827, fell_over 0.034, illegal_contact 0.29. play.py loads
     model_19500 with --task rough (Go2-scale x2.5 random robot) and fails with

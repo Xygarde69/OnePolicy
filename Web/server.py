@@ -11,9 +11,11 @@ Two flows (ui/):
   Train your own robot: upload an MJCF, check it against the convention,
     tweak reward weights / limits / morphology conditions, run train.py here,
     watch its stats live, download the checkpoints (or import a .pt).
-  OnePolicy: a bundled, generated (sliders) or uploaded robot, walked by
-    Web/OnePolicy/OnePolicy.pt (run 2026-10-17_17-48-07, model_10000) in
+  OnePolicy: a bundled, generated (sliders) or uploaded robot, walked in
     play.py's viser viewer, driven with WASD + arrows (play.py --command-port).
+    Flat ground: Web/OnePolicy/OnePolicy.pt (run 2026-10-17_17-48-07,
+    model_10000). Rough terrains: Web/OnePolicy_r/OnePolicy_r.pt (run
+    2026-10-22_13-10-41, model_19500, trained with the height scan).
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ TRAINING = REPO / "Training"
 WORKSPACE = WEB / "workspace"
 UI_BUILD = WEB / "ui" / "out"
 ONEPOLICY = WEB / "OnePolicy" / "OnePolicy.pt"
+ONEPOLICY_R = WEB / "OnePolicy_r" / "OnePolicy_r.pt"
 RUNS = TRAINING / "logs" / "rsl_rl" / "morph_quadruped_velocity"
 sys.path.insert(0, str(TRAINING))
 sys.path.insert(0, str(WEB))
@@ -53,13 +56,25 @@ from generation.knees import is_x_knee  # noqa: E402
 
 PY = sys.executable
 CHECK_TIMEOUT_S = 900
+# Actor inputs of a flat-task policy; rough-task ones add the 17 x 11 height scan.
+FLAT_OBS = 51
 # Warp/MuJoCo-Warp kernel-load chatter, dropped from logs shown in the page.
 NOISE = re.compile(r"^(Module |Warp \d|   (CUDA|Devices|Kernel|\"cpu\"|\"cuda)|     )|warn")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # Training logs keep rsl_rl's indented stats; only kernel-load lines are dropped.
 TRAIN_NOISE = re.compile(r"^(Module |Warp \d)")
-# Only flat ground is supported by the UI (rough is untested with OnePolicy).
-TERRAINS = ("flat",)
+# UI terrain -> play.py --terrain-type (None: flat task). Every terrain but flat
+# runs the rough task, walked by OnePolicy_r (the policy needs its height scan).
+# No stairs.
+TERRAINS = {
+  "flat": None,
+  "slope_up": "hf_pyramid_slope_inv",
+  "slope_down": "hf_pyramid_slope",
+  "rough": "random_rough",
+  "waves": "wave_terrain",
+}
+# Rough terrains are all at training terrain level 4 (of rows 0-9).
+TERRAIN_LEVEL = 4
 
 _play = {"proc": None, "log": None, "args": None, "port": None, "stopped": False}
 _play_lock = threading.Lock()
@@ -76,11 +91,23 @@ class ApiError(Exception):
 # ---------------------------------------------------------------- helpers
 
 def checkpoints() -> list[str]:
-  """OnePolicy first, then every model_*.pt of the training runs, newest first."""
+  """OnePolicy and OnePolicy_r first, then every model_*.pt of the training runs, newest first."""
   ckpts = sorted(RUNS.glob("*/model_*.pt"),
                  key=lambda p: (p.parent.name, int(re.findall(r"\d+", p.stem)[-1])),
                  reverse=True)
-  return ([str(ONEPOLICY)] if ONEPOLICY.is_file() else []) + [str(p) for p in ckpts]
+  return [str(p) for p in (ONEPOLICY, ONEPOLICY_R) if p.is_file()] + [str(p) for p in ckpts]
+
+
+def scans_terrain(policy: str) -> bool:
+  """Whether a checkpoint's actor takes the height scan (rough task)."""
+  import torch  # Only needed here.
+
+  path = Path(policy)
+  key = ("scan", str(path), path.stat().st_mtime)
+  if key not in _cache:
+    actor = torch.load(path, map_location="cpu", weights_only=False)["actor_state_dict"]
+    _cache[key] = actor["mlp.0.weight"].shape[1] > FLAT_OBS
+  return _cache[key]
 
 
 def upload_dir(upload: str) -> Path:
@@ -112,6 +139,11 @@ def clean_log(text: str) -> str:
 
 def policy_args(body: dict) -> list[str]:
   policy = body.get("policy") or (checkpoints() or [None])[0]
+  # OnePolicy walks flat ground, OnePolicy_r the rough terrains: either one
+  # picked means "the OnePolicy for this terrain".
+  if policy in (str(ONEPOLICY), str(ONEPOLICY_R)):
+    pick = ONEPOLICY if (body.get("terrain") or "flat") == "flat" else ONEPOLICY_R
+    policy = str(pick) if pick.is_file() else policy
   if policy is None:
     return []
   if not Path(policy).is_file():
@@ -164,7 +196,8 @@ def stop_proc(proc) -> None:
 def api_state(_: dict) -> dict:
   return {"robots": list(available_robots()), "checkpoints": checkpoints(),
           "onepolicy": str(ONEPOLICY) if ONEPOLICY.is_file() else None,
-          "terrains": TERRAINS}
+          "onepolicy_r": str(ONEPOLICY_R) if ONEPOLICY_R.is_file() else None,
+          "terrains": list(TERRAINS)}
 
 
 def api_upload(body: dict) -> dict:
@@ -286,10 +319,20 @@ def api_check(body: dict) -> dict:
 def api_play(body: dict) -> dict:
   terrain = body.get("terrain") or "flat"
   if terrain not in TERRAINS:
-    raise ApiError(f"Terrain '{terrain}' is under construction; only flat works.")
-  cmd = [PY, "play.py", *source_args(body, play=True), *policy_args(body),
-         "--viewer", "viser", "--task", terrain]
-  if not policy_args(body):
+    raise ApiError(f"Unknown terrain '{terrain}'.")
+  policy = policy_args({**body, "terrain": terrain})
+  # A height-scan policy walks flat ground as the rough task's flat patches;
+  # a flat policy has no height scan, so it can only walk flat ground.
+  rough = terrain != "flat" or (policy and scans_terrain(policy[1]))
+  if rough and policy and not scans_terrain(policy[1]):
+    raise ApiError(f"{Path(policy[1]).name} was trained on flat ground (no height "
+                   "scan): pick OnePolicy_r or a rough-task checkpoint for this terrain.")
+  cmd = [PY, "play.py", *source_args(body, play=True), *policy,
+         "--viewer", "viser", "--task", "rough" if rough else "flat"]
+  if rough:
+    cmd += ["--terrain-type", TERRAINS[terrain] or "flat",
+            "--difficulty", str(TERRAIN_LEVEL / 10)]
+  if not policy:
     cmd += ["--agent", "zero"]
   port = None
   if body.get("drive"):
@@ -483,6 +526,9 @@ def api_train(body: dict) -> dict:
       raise ApiError("Share of envs on your robot must be in (0, 1).")
     cmd += ["--generalise", str(fraction), "--generalise-robots", find_robot(robot).stem]
   cmd += _resume_args(body.get("policy"))
+  # A height-scan checkpoint (OnePolicy_r) only loads into the rough task.
+  if body.get("policy") and scans_terrain(body["policy"]):
+    cmd += ["--task", "rough"]
   # ONNX only on request: the run is tried out in the sim from its .pt files.
   if not body.get("export_onnx"):
     cmd += ["--export-onnx", "False"]
@@ -590,7 +636,7 @@ def api_import_policy(body: dict) -> dict:
 def download(query: dict) -> tuple[bytes, str, str]:
   """A checkpoint, ONNX or plot from the runs or Web/OnePolicy/: (data, type, name)."""
   path = Path((query.get("path") or [""])[0]).resolve()
-  roots = (RUNS.resolve(), ONEPOLICY.parent.resolve())
+  roots = (RUNS.resolve(), ONEPOLICY.parent.resolve(), ONEPOLICY_R.parent.resolve())
   if not any(r in path.parents for r in roots) or path.suffix not in (".pt", ".onnx", ".csv", ".png"):
     raise ApiError("Only checkpoints, ONNX files and plots of the runs can be downloaded.")
   if not path.is_file():

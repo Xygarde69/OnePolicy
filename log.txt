@@ -3,6 +3,56 @@ OnePolicy change log
 Newest first. One entry per change: what changed, why, and how it was checked.
 Commit hashes refer to the commit that made the change.
 
+2026-10-24  OnePolicy_r: the rough-terrain policy in the web UI; terrains live
+  - What: run 2026-10-22_13-10-41 model_19500 (resumed from
+    2026-10-22_07-55-40 model_12100; 2048 envs, rough task, terrain batches
+    0.3-3) is OnePolicy_r, stored in Web/OnePolicy_r/ (.pt, .onnx, params,
+    seed). server.py: flat ground plays OnePolicy (flat task); slope up,
+    slope down, rough and waves play OnePolicy_r with --task rough
+    --terrain-type <type> --difficulty 0.4 (training terrain level 4).
+    Picking either OnePolicy follows the terrain; a checkpoint's task is read
+    from its actor's input size (51 flat, 238 with the height scan), so a
+    flat checkpoint is refused on rough terrain and training from OnePolicy_r
+    uses --task rough. UI: the terrain picker shows these five terrains, no
+    longer under construction, each tagged with the policy that walks it;
+    sand, ice and gravel (never trained) and stairs are gone. Wordmark
+    OnePolicy_r.
+  - Why: the rough run reached terrain level ~4 with few falls; flat-only
+    OnePolicy can't load into the rough task (51 vs 238 inputs).
+  - Checked: run stats over its last 500 iterations: terrain_levels 4.07,
+    episode length 827, fell_over 0.034, illegal_contact 0.29. play.py loads
+    model_19500 with --task rough (Go2-scale x2.5 random robot) and fails with
+    the flat task (size mismatch 238 vs 51). server.py builds the expected
+    play.py commands for every terrain (OnePolicy flat, OnePolicy_r + level
+    0.4 for the rest; unknown terrains refused). UI typechecks and builds.
+    The web flow was not run end to end.
+
+2026-10-21  Contact softness scaled per robot; hip visuals scaled; terrain level per batch
+  - What: apply_morphologies (_scale_contacts) sets every robot geom's solref
+    time constant to Go2's x sqrt(s_L) (at least 2 timesteps), solimp width
+    x s_L, and solmix 1e3 so shin/base contacts take the robot's values over
+    the terrain's. The white hip cylinder (0.041 x 0.032 m) and hip.obj mesh
+    are scaled with the robot (generator; visual only, no mass or collision;
+    same robots per seed). Morphology/terrain_level_<batch> logged.
+  - Why: play shows small robots stopping at stair edges while large ones
+    climb. Fixed contact parameters are size-dependent: a 0.3x foot landing
+    at Froude-scaled speed sank 67% of its radius and settled in 0.22 Go2-s
+    (Go2 35% / 0.12, 3x 20% / 0.07); scaled, 43 / 35 / 33% and 0.12 for all.
+    Static sinking is negligible at every size (0.11 mm).
+  - Checked: single-sphere MuJoCo landing tests above; play envs at x0.3 / x1
+    / x3 get foot timeconst 0.011 / 0.020 / 0.034 s, width 6.8 / 22.6 / 67.8
+    mm, hip cylinder radius 12 / 41 / 123 mm; 3-iteration rough train run
+    (140 envs, 7 sims) logs terrain_level per batch. Policy effect not yet
+    measured.
+
+2026-10-21  play.py --terrain-type / --difficulty; rough play nconmax 512
+  - What: rough play can fix every patch to one terrain type and difficulty.
+    nconmax is 512 in rough play.
+  - Why: test a policy on chosen terrain; one env's 64-contact pool overflowed
+    on heightfield slopes (67 contacts), which training's 2048-env pool absorbs.
+  - Checked: headless Go2 runs of model_6400 on stairs 0.8, slope 0.3, rough
+    0.5, waves 1.0 (falls on waves 1.0).
+
 2026-10-21  No automatic command widening; level 2 by hand (--lvl 2)
   - What: the velocity_stages / reward_weight stages at step 5000*24 are gone.
     velocity_env_cfg.TRAINING_LEVELS holds both stages: level 1 (lin x

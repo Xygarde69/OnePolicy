@@ -56,6 +56,31 @@ Results on the bundled robots are in [Robot compatibility](#robot-compatibility)
 It is an early checkpoint: it walks every bundled robot at 0.5 m/s but has not
 seen the later command curriculum (fast commands, from iteration 5000).
 
+### Rough terrain: `Web/OnePolicy_r/OnePolicy_r.pt`
+
+**OnePolicy_r** is the rough-terrain policy. It takes the height scan
+(17 × 11 rays) and was trained on the rough task, so it only loads with
+`--task rough`. In the web UI it walks every terrain except flat, which uses
+OnePolicy.
+
+| | |
+|---|---|
+| File | `Web/OnePolicy_r/OnePolicy_r.pt` and `Web/OnePolicy_r/OnePolicy_r.onnx` |
+| Source run | `2026-10-22_13-10-41`, checkpoint `model_19500.pt` (resumed from `2026-10-22_07-55-40/model_12100.pt`) |
+| Code | commit `4abe7bc` + the contact-scaling changes in the final commit |
+| Training | 2048 generated quadrupeds, rough task, terrain batches 0.3–3 × Go2, robot seed `2106059700` |
+| Config | `Web/OnePolicy_r/params/env.yaml`, `Web/OnePolicy_r/params/agent.yaml` |
+| Observations | 238 actor inputs (the 51 flat ones + 187 height-scan rays) |
+
+```bash
+cd Training
+$PY play.py --robot spot --task rough --terrain-type random_rough --difficulty 0.4 \
+  --policy ../Web/OnePolicy_r/OnePolicy_r.pt
+```
+
+Over its last 500 iterations: terrain level ≈ 4.1, episode length ≈ 830 / 1000,
+fell_over ≈ 3 %.
+
 ## Run OnePolicy (minimum)
 
 Needs an NVIDIA GPU, git, [uv](https://docs.astral.sh/uv/) and
@@ -120,6 +145,7 @@ Morphology/
 │       ├── rl/runner.py              # PPO runner (+ ONNX export)
 │       └── config/morph_quadruped/   # env + PPO config (Go2's, robot swapped)
 ├── Web/                              # browser UI: train your robot, or walk any robot with OnePolicy
+│   ├── OnePolicy/, OnePolicy_r/      # policies the UI walks: flat ground / rough terrains
 │   ├── server.py                     # stdlib HTTP server + JSON API (runs train.py / play.py here)
 │   ├── geometry.py                   # robot geoms -> three.js for the 3D previews
 │   └── ui/                           # Next.js + TypeScript + Tailwind + shadcn/ui front end
@@ -369,7 +395,10 @@ option is given.
 | `--policy PATH` | latest | Checkpoint `model_*.pt`. Default: newest checkpoint of the newest run |
 | `--forward` | `auto` | Base axis the robot faces: `auto`, `+x`, `-x`, `+y`, `-y` |
 | `--init-pose` | `auto` | Standing pose: `keyframe`, `train`, or `auto` (keyframe if the XML has one) |
-| `--task` | `flat` | `flat` or `rough` |
+| `--task` | `flat` | `flat` or `rough` (5 × 5 grid of random training terrains) |
+| `--terrain-type` | random | Rough: every patch one type: `flat`, `pyramid_stairs`, `pyramid_stairs_inv`, `hf_pyramid_slope`, `hf_pyramid_slope_inv`, `random_rough`, `wave_terrain` |
+| `--difficulty` | random | Rough: every patch this difficulty, 0–1 (training row × 0.1; 1 = top row, e.g. 10 cm Go2 stairs) |
+| `--terrain-scale` | robot's batch | Rough: grid scale (default: the training batch nearest the robot's leg length) |
 | `--agent` | `trained` | `zero` / `random` send zero / random actions (checks a robot without a policy) |
 | `--scale-actuators-by-mass` | `True` | Scale gains by robot mass, as in training |
 | `--viewer` | `auto` | `native` (MuJoCo window), `viser` (browser), or `auto` |
@@ -590,10 +619,16 @@ Without a build, `server.py` serves the old single-file page (also always at
 1. Pick a bundled robot (all spinning in 3D), generate one (seed + sliders
    for size, body, legs, masses and knee layout; unset sliders keep the
    seed's random draw), or upload your own (with the convention in short).
-2. Its parts popup, then a terrain (only flat works; the rest are marked
-   under construction).
-3. `play.py --viewer viser --command-port …` runs it with the chosen policy
-   (`OnePolicy/OnePolicy.pt` by default); the viewer is embedded and you drive
+2. Its parts popup, then a terrain: flat, slope up / down, rough or waves.
+   Every terrain but flat is the rough task with every patch that type, at
+   training terrain level 4 (`--difficulty 0.4`), scaled to the robot. No
+   stairs.
+3. `play.py --viewer viser --command-port …` runs it with the chosen policy:
+   OnePolicy (`Web/OnePolicy/OnePolicy.pt`) on flat ground, OnePolicy_r
+   (`Web/OnePolicy_r/OnePolicy_r.pt`) on the rough terrains; picking either
+   one follows the terrain. A flat checkpoint is refused on rough terrain; a
+   rough one on flat runs the rough task's flat patches. Fine-tuning from
+   OnePolicy_r trains the rough task. The viewer is embedded and you drive
    with **W/S** (forward/back), **A/D** (sideways) and **←/→** (turn). Speeds
    are Go2 units, scaled to the robot. Switch to camera mode to orbit the view.
 

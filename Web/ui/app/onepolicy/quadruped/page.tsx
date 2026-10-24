@@ -59,6 +59,14 @@ export default function OnePolicyQuadruped() {
 
   const label = source?.source === "robot" ? prettyName(source.robot) : source?.source === "random" ? `generated #${source.seed}` : upload?.xml ?? "";
 
+  // OnePolicy walks flat ground, OnePolicy_r the rough terrains: follow the terrain.
+  const pickTerrain = (t: string) => {
+    setTerrain(t);
+    if (state && (policy === state.onepolicy || policy === state.onepolicy_r)) {
+      setPolicy((t === "flat" ? state.onepolicy : state.onepolicy_r) ?? policy);
+    }
+  };
+
   const start = useCallback(
     () => api<PlayStatus>("play", { ...source, policy, terrain, drive: true }),
     [source, policy, terrain],
@@ -80,7 +88,9 @@ export default function OnePolicyQuadruped() {
               <SelectTrigger className="w-72"><SelectValue placeholder="no checkpoint found" /></SelectTrigger>
               <SelectContent>
                 {state.checkpoints.map((c) => (
-                  <SelectItem key={c} value={c}>{c === state.onepolicy ? <OnePolicy /> : shortPath(c)}</SelectItem>
+                  <SelectItem key={c} value={c}>
+                    {c === state.onepolicy ? <OnePolicy /> : c === state.onepolicy_r ? <OnePolicy r /> : shortPath(c)}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -162,7 +172,11 @@ export default function OnePolicyQuadruped() {
         {step === 2 && (
           <motion.section key="terrain" initial={{ opacity: 0, x: 40 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -40 }} className="flex flex-col gap-5">
             <h2 className="font-heading text-3xl uppercase">Where should it walk?</h2>
-            <TerrainPicker value={terrain} available={state?.terrains ?? ["flat"]} onChange={setTerrain} />
+            <TerrainPicker value={terrain} available={state?.terrains ?? ["flat"]} onChange={pickTerrain} />
+            <p className="text-sm">
+              <OnePolicy /> walks flat ground; <OnePolicy r /> was trained on the rest, with a height scan of the
+              ground ahead. Terrains are at training level 4, scaled to the robot&apos;s size.
+            </p>
             <Button size="lg" className="w-fit" onClick={() => setStep(3)}>Place it in the sim →</Button>
           </motion.section>
         )}

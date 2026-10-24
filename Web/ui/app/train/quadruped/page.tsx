@@ -241,7 +241,8 @@ export default function TrainQuadruped() {
                         <SelectItem value={SCRATCH}>Scratch (random weights)</SelectItem>
                         {state?.checkpoints.map((c) => (
                           <SelectItem key={c} value={c}>
-                            {c === state.onepolicy ? <><OnePolicy /> (fine-tune it)</> : shortPath(c)}
+                            {c === state.onepolicy ? <><OnePolicy /> (fine-tune it)</>
+                              : c === state.onepolicy_r ? <><OnePolicy r /> (fine-tune it, rough terrain)</> : shortPath(c)}
                           </SelectItem>
                         ))}
                       </SelectContent>

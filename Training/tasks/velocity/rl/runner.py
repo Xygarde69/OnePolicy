@@ -121,6 +121,15 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
           self.logger.writer.add_scalar(f"Morphology/{term}_{bucket}", means[g][t], it)
     self._term_sums.zero_()
     self._term_steps = 0
+    # Terrain rows per group (rough task): whether a size avoids hard terrain.
+    terrains = [e.scene.terrain for e in self._sub_envs]
+    if all(t is not None and getattr(t, "terrain_levels", None) is not None
+           for t in terrains):
+      rows = torch.cat([t.terrain_levels.float() for t in terrains])
+      for g, bucket in enumerate(self._groups):
+        if self._group_size[g]:
+          mean = rows[self._size_bucket == g].mean().item()
+          self.logger.writer.add_scalar(f"Morphology/terrain_level_{bucket}", mean, it)
     levels = []
     for e in self._sub_envs:
       term = e.command_manager.get_term("twist")

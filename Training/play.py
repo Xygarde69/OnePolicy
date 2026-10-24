@@ -21,6 +21,12 @@ forward/back, left/right = sideways; L1 turns left, R1 turns right (gamepad.py).
 --command-port P takes the command from UDP datagrams "forward left yaw" on
 127.0.0.1:P instead (the web harness's keyboard driving); no datagram for
 0.5 s means stand still.
+
+--task rough plays on a 5 x 5 grid of the training terrains, each patch a
+random type and difficulty. --terrain-type and --difficulty fix them to test
+one terrain:
+
+  python play.py --robot go2 --task rough --terrain-type pyramid_stairs --difficulty 0.8
 """
 
 import os
@@ -31,7 +37,7 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -44,6 +50,7 @@ import tyro  # noqa: E402
 import mjlab  # noqa: E402
 
 from mjlab.envs import ManagerBasedRlEnv  # noqa: E402
+from mjlab.terrains.config import ROUGH_TERRAINS_CFG  # noqa: E402
 from mjlab.rl import RslRlVecEnvWrapper  # noqa: E402
 from mjlab.utils.os import get_checkpoint_path  # noqa: E402
 from mjlab.utils.torch import configure_torch_backends  # noqa: E402
@@ -104,6 +111,12 @@ class PlayConfig:
   terrain_scale: float | None = None
   """Scale of the rough terrain grid; default: the train.py terrain batch
   nearest the robot's leg length vs Go2's."""
+  terrain_type: Literal["flat", "pyramid_stairs", "pyramid_stairs_inv", "hf_pyramid_slope",
+                        "hf_pyramid_slope_inv", "random_rough", "wave_terrain"] | None = None
+  """Rough task: every patch this terrain type. None: random types, as in training."""
+  difficulty: float | None = None
+  """Rough task: every patch this difficulty, 0 (easiest) to 1 (training's top row,
+  e.g. 10 cm stairs for Go2). None: random in 0..1."""
   agent: Literal["zero", "random", "trained"] = "trained"
   """'trained' runs --policy; 'zero' / 'random' send zero / random actions."""
   forward: Literal["auto", "+x", "-x", "+y", "-y"] = "auto"
@@ -254,6 +267,21 @@ def attach_command_port(env: ManagerBasedRlEnv, port: int) -> None:
   print(f"[INFO]: Commands from UDP 127.0.0.1:{port}", flush=True)
 
 
+def pick_terrain(env_cfg, terrain_type: str | None, difficulty: float | None) -> None:
+  """Make every patch of the play grid `terrain_type` at `difficulty` (None: random)."""
+  gen = env_cfg.scene.terrain.terrain_generator
+  if terrain_type is not None:
+    gen = replace(gen, sub_terrains={terrain_type: gen.sub_terrains[terrain_type]})
+    print(f"[INFO] Terrain type: {terrain_type}")
+  if difficulty is not None:
+    if not 0.0 <= difficulty <= 1.0:
+      raise ValueError(f"--difficulty must be in [0, 1], got {difficulty}.")
+    gen = replace(gen, difficulty_range=(difficulty, difficulty))
+    print(f"[INFO] Terrain difficulty: {difficulty:g} (training row "
+          f"{min(int(difficulty * ROUGH_TERRAINS_CFG.num_rows), ROUGH_TERRAINS_CFG.num_rows - 1)})")
+  env_cfg.scene.terrain.terrain_generator = gen
+
+
 def run_play(cfg: PlayConfig):
   # The robot is deleted when play ends, however it ends.
   robot_dir = Path(tempfile.mkdtemp(prefix="play_robot_"))
@@ -279,6 +307,12 @@ def _play(cfg: PlayConfig, robot_dir: Path):
   scale_terrain(env_cfg, terrain_scale)
   if cfg.task == "rough":
     print(f"[INFO] Rough terrain scaled x{terrain_scale:g}")
+    pick_terrain(env_cfg, cfg.terrain_type, cfg.difficulty)
+    # nconmax is a pool shared by all envs: training's 64 x 2048 absorbs a robot
+    # on a heightfield slope (~70 contacts), one env's 64 overflows.
+    env_cfg.sim.nconmax = 512
+  elif cfg.terrain_type is not None or cfg.difficulty is not None:
+    raise ValueError("--terrain-type / --difficulty need --task rough.")
   agent_cfg = morph_quadruped_ppo_runner_cfg()
   env_cfg.scene.num_envs = 1
   set_morphologies(env_cfg, robot_dir, pose)

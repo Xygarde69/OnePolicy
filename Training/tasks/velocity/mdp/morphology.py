@@ -20,10 +20,12 @@ if TYPE_CHECKING:
 
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
 _ACTUATOR_FIELDS = ("actuator_ctrlrange", "actuator_forcerange", "dof_armature")
+_CONTACT_FIELDS = ("geom_solref", "geom_solimp", "geom_solmix")
 
 
 @requires_model_fields(
-  *MORPHOLOGY_FIELDS, *_ACTUATOR_FIELDS, "jnt_range", recompute=RecomputeLevel.set_const
+  *MORPHOLOGY_FIELDS, *_ACTUATOR_FIELDS, *_CONTACT_FIELDS, "jnt_range",
+  recompute=RecomputeLevel.set_const
 )
 def apply_morphologies(
   env: ManagerBasedRlEnv,
@@ -45,6 +47,7 @@ def apply_morphologies(
   With `scale_actuators`, Go2's actuators are rescaled to the robot: effort
   limits and stiffness by s_m * s_L (the torque to hold the body up),
   damping by s_m * s_L^1.5 and armature by s_m * s_L^2 (link inertia).
+  Contact softness is scaled to the robot's size (_scale_contacts).
   Must run before other startup events that read these fields.
   """
   asset: Entity = env.scene[asset_cfg.name]
@@ -93,6 +96,9 @@ def apply_morphologies(
         values, dtype=model_field.dtype, device=env.device
       ).reshape(len(env_ids), len(element_ids), *model_field.shape[2:])
 
+  _scale_contacts(env, env_ids, scene_ids("geom", bank["geom_names"]),
+                  scales.length[env_ids])
+
   asset.data.default_root_state[env_ids, 2] = torch.as_tensor(
     bank["root_height"][bank_ids], dtype=torch.float, device=env.device)
 
@@ -135,6 +141,40 @@ def apply_morphologies(
     dof_ids = asset.indexing.joint_v_adr[act.target_ids].long()
     default = env.sim.get_default_field("dof_armature")[dof_ids]
     env.sim.model.dof_armature[rows, dof_ids] = default * inertia
+
+
+# Robot geoms' weight in MuJoCo's solref/solimp mixing against the terrain's 1,
+# so equal-priority contacts (shins, base) take the robot's scaled values.
+_ROBOT_SOLMIX = 1e3
+
+
+def _scale_contacts(env, env_ids: torch.Tensor, geom_ids: torch.Tensor,
+                    s_L: torch.Tensor) -> None:
+  """Scale each robot's contact softness to its size (Go2's at s_L = 1).
+
+  solref's time constant goes with the Froude time scale sqrt(s_L) (kept at
+  least two timesteps, MuJoCo's floor) and solimp's width with s_L. With
+  fixed values a 0.3x foot landing at Froude-scaled speed sank 67% of its
+  radius and took 0.22 Go2-seconds to settle (Go2: 35%, 0.12; 3x: 20%, 0.07);
+  scaled, every size gets Go2's 0.12 and 33-43% (the rest is the fixed 5 ms
+  timestep). Feet have priority over the terrain, so foot contacts use these
+  directly; other robot geoms dominate the mixing through _ROBOT_SOLMIX.
+  """
+  rows = env_ids[:, None]
+  model = env.sim.model
+  solref = env.sim.get_default_field("geom_solref")[geom_ids].clone()
+  solimp = env.sim.get_default_field("geom_solimp")[geom_ids].clone()
+  if (solref[:, 0] <= 0).any():
+    raise ValueError("Robot geoms use direct (negative) solref; cannot scale by size.")
+  min_timeconst = 2 * env.sim.mj_model.opt.timestep
+  timeconst = solref[None, :, 0] * torch.sqrt(s_L)[:, None]
+  ref = solref[None].repeat(len(env_ids), 1, 1)
+  ref[..., 0] = torch.clamp(timeconst, min=min_timeconst)
+  imp = solimp[None].repeat(len(env_ids), 1, 1)
+  imp[..., 2] = solimp[None, :, 2] * s_L[:, None]
+  model.geom_solref[rows, geom_ids] = ref.to(model.geom_solref.dtype)
+  model.geom_solimp[rows, geom_ids] = imp.to(model.geom_solimp.dtype)
+  model.geom_solmix[rows, geom_ids] = _ROBOT_SOLMIX
 
 
 def _apply_joint_data(env, asset: Entity, env_ids: torch.Tensor, joint_names,

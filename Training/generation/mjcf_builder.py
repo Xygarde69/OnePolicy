@@ -162,7 +162,8 @@ def shape_to_geom(shape, frame_prefix, length_key):
     half_len = shape.get(length_key, 1.0) / 2.0
     attrs.update(type="cylinder", size=fmt((shape.get("radius", 0.5), half_len)))
   elif stype == pybullet.GEOM_MESH:
-    # Only the hip uses a mesh (hip.obj, unit scale) in create_robot.
+    # Only the hip uses a mesh (hip.obj, scaled with the robot) in create_robot;
+    # build_mjcf writes its meshScale into the mesh asset.
     attrs.update(type="mesh", mesh=os.path.splitext(os.path.basename(shape["fileName"]))[0])
   else:
     raise ValueError(f"Unsupported PyBullet shape type {stype}")
@@ -215,7 +216,11 @@ def build_mjcf(rec, dynamics, seed: int, x_knee: bool = False) -> ET.Element:
   ET.SubElement(default, "site", rgba="1 0 0 1", group="5")
 
   asset = ET.SubElement(root, "asset")
-  ET.SubElement(asset, "mesh", name="hip", file="hip.obj")
+  hip_scales = {tuple(v["meshScale"]) for v in rec.visual_shapes.values()
+                if v["shapeType"] == pybullet.GEOM_MESH and "meshScale" in v}
+  assert len(hip_scales) <= 1, hip_scales
+  hip_scale = hip_scales.pop() if hip_scales else (1.0, 1.0, 1.0)
+  ET.SubElement(asset, "mesh", name="hip", file="hip.obj", scale=fmt(hip_scale))
 
   world = ET.SubElement(root, "worldbody")
   base = ET.SubElement(world, "body", name="base_link", pos="0 0 0")

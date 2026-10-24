@@ -27,6 +27,7 @@ export type State = {
   robots: string[];
   checkpoints: string[];
   onepolicy: string | null;
+  onepolicy_r: string | null;
   terrains: string[];
 };
 

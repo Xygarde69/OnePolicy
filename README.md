@@ -13,11 +13,10 @@ The same policy then runs on robots it was never trained on: Unitree Go2 / Go1
 At play time, each robot is rewritten into the training convention
 automatically.
 
-<video src="grid_2x2_2026-10-25.mp4" width="100%" autoplay loop muted playsinline controls></video>
+![One policy, four robots](grid_2x2_2026-10-25_random-frame.jpg)
 
 *One policy, four robots: Spot and ANYmal C on rough terrain, and two smaller
-quadrupeds, all driven by the same checkpoint
-([grid_2x2_2026-10-25.mp4](grid_2x2_2026-10-25.mp4)).*
+quadrupeds, all driven by the same checkpoint.*
 
 ```
                  ┌───────────────────────────── train.py ──────────────────────────────┐
